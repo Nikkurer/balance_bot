@@ -1,0 +1,19 @@
+telegram:
+  bot_token: "YOUR_BOT_TOKEN"
+  allowed_user_ids:
+    - 123456789
+
+# Каталог с плагинами (файлы .py или пакеты); в Docker задаётся через compose
+plugins_dir: plugins
+
+services:
+  - name: "demo-service"
+    plugin: mock
+    poll_interval_seconds: 300
+    balance_threshold: 100.0
+    subscription_warn_days: 7
+    plugin_config:
+      balance: 50.0
+      currency: RUB
+      # Дата отключения приходит от сервиса (плагин), бот её не вычисляет
+      subscription_end: "2026-06-01T00:00:00+00:00"
