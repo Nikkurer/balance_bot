@@ -5,13 +5,24 @@ from typing import Any
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
-from aiogram.types import Message, TelegramObject
+from aiogram.types import BotCommand, Message, TelegramObject
 
 from balance_bot.models import AppConfig
 from balance_bot.notifications import format_status_message
 from balance_bot.state import StateStore
 
 logger = logging.getLogger(__name__)
+
+BOT_COMMANDS: list[BotCommand] = [
+    BotCommand(command="start", description="Справка по боту"),
+    BotCommand(command="status", description="Состояние всех сервисов"),
+    BotCommand(command="refresh", description="Принудительный опрос"),
+]
+
+
+async def register_bot_commands(bot: Bot) -> None:
+    """Регистрация команд в меню Telegram (setMyCommands)."""
+    await bot.set_my_commands(BOT_COMMANDS)
 
 
 class AuthMiddleware(BaseMiddleware):

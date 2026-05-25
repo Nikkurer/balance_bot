@@ -6,7 +6,7 @@ from pathlib import Path
 
 from aiogram import Bot
 
-from balance_bot.bot import create_dispatcher, notify_users
+from balance_bot.bot import create_dispatcher, notify_users, register_bot_commands
 from balance_bot.config import ConfigError, load_config
 from balance_bot.plugins.loader import (
     create_plugin,
@@ -44,6 +44,9 @@ async def run(config_path: Path, plugins_dir_override: Path | None = None) -> No
     logger.info("Запущен мониторинг %d сервис(ов)", len(config.services))
 
     dp = create_dispatcher(config, state, on_refresh=scheduler.poll_all_now)
+
+    await register_bot_commands(bot)
+    logger.info("Команды бота зарегистрированы в Telegram")
 
     scheduler.start_all()
     await scheduler.poll_all_now()
