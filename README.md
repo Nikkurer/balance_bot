@@ -72,18 +72,8 @@ services:
 
 ## Плагины
 
-Плагины лежат в каталоге `plugins/` (настраивается через `plugins_dir`). Добавление — **копирование файла** в эту папку и указание `plugin: <имя>` в конфиге. Код бота менять не нужно.
+Плагины лежат в каталоге `plugins/` (настраивается через `plugins_dir`). Добавление — копирование файла в эту папку и указание `plugin: <имя>` в конфиге. Код бота менять не нужно.
 
-Подробности — в [plugins/README.md](plugins/README.md).
-
-Базовый контракт:
-
-```python
-class Plugin(ServicePlugin):
-    async def fetch_status(self) -> ServiceStatus:
-        ...
-```
-
-`ServiceStatus` — данные **от сервиса**: `balance`, `currency`, `subscription_end`, при ошибке — `error`.
-
-Тестовый плагин `mock` уже в `plugins/mock.py`.
+- Общее и контракт: [plugins/README.md](plugins/README.md)
+- Документация по сервисам: [mock](plugins/mock.md), [vdsina](plugins/vdsina.md), [aeza](plugins/aeza.md)
+- Шаблон для нового плагина: [PLUGIN_TEMPLATE.md](plugins/PLUGIN_TEMPLATE.md)
