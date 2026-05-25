@@ -4,7 +4,7 @@
 
 ## CI — что запускается автоматически
 
-Workflow: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (actions на Node.js 24: `checkout@v6`, `setup-uv@v6`, `setup-buildx-action@v4`, `build-push-action@v7`)
+Workflow: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (actions на Node.js 24: `checkout@v6`, `setup-uv@v7`, `setup-buildx-action@v4`, `build-push-action@v7`)
 
 | Событие | Ветки |
 |---------|--------|
