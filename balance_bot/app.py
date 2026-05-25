@@ -10,7 +10,9 @@ from balance_bot.bot import create_dispatcher, notify_users
 from balance_bot.config import ConfigError, load_config
 from balance_bot.plugins.loader import (
     create_plugin,
+    ensure_plugins_for_services,
     init_plugins,
+    registered_plugins,
     resolve_plugins_dir,
 )
 from balance_bot.scheduler import Scheduler
@@ -25,7 +27,9 @@ async def run(config_path: Path, plugins_dir_override: Path | None = None) -> No
         Path(config.plugins_dir), config_path
     )
     init_plugins(plugins_dir)
-    logger.info("Plugins directory: %s", plugins_dir)
+    loaded = registered_plugins()
+    logger.info("Каталог плагинов: %s (загружено: %s)", plugins_dir, ", ".join(loaded) or "—")
+    ensure_plugins_for_services(config.services)
 
     state = StateStore()
     bot = Bot(token=config.bot_token)
@@ -37,6 +41,7 @@ async def run(config_path: Path, plugins_dir_override: Path | None = None) -> No
     for service in config.services:
         plugin = create_plugin(service)
         scheduler.add_poller(service, plugin)
+    logger.info("Запущен мониторинг %d сервис(ов)", len(config.services))
 
     dp = create_dispatcher(config, state, on_refresh=scheduler.poll_all_now)
 

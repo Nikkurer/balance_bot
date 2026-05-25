@@ -3,6 +3,7 @@ import logging
 import sys
 from pathlib import Path
 
+from balance_bot.config import ConfigError
 from balance_bot.models import ServiceConfig
 from balance_bot.plugins.base import ServicePlugin
 
@@ -74,13 +75,45 @@ def registered_plugins() -> list[str]:
     return sorted(_REGISTRY)
 
 
+def ensure_plugins_for_services(services: list[ServiceConfig]) -> None:
+    """Проверить, что для каждого сервиса из конфига есть загруженный плагин."""
+    available = registered_plugins()
+    errors: list[str] = []
+
+    for service in services:
+        if service.plugin in _REGISTRY:
+            logger.info(
+                "Сервис '%s': плагин '%s' найден",
+                service.name,
+                service.plugin,
+            )
+        else:
+            logger.error(
+                "Сервис '%s': плагин '%s' не найден (доступны: %s)",
+                service.name,
+                service.plugin,
+                ", ".join(available) or "(нет загруженных плагинов)",
+            )
+            errors.append(
+                f"сервис '{service.name}': плагин '{service.plugin}' не найден"
+            )
+
+    if errors:
+        hint = ", ".join(available) or "(нет загруженных плагинов)"
+        raise ConfigError(
+            "Для части сервисов нет плагинов:\n"
+            + "\n".join(f"  - {e}" for e in errors)
+            + f"\n  Доступные плагины: {hint}"
+        )
+
+
 def create_plugin(service: ServiceConfig) -> ServicePlugin:
     plugin_cls = _REGISTRY.get(service.plugin)
     if plugin_cls is None:
         available = ", ".join(registered_plugins()) or "(none loaded)"
-        raise ValueError(
-            f"Unknown plugin '{service.plugin}' for service '{service.name}'. "
-            f"Available: {available}"
+        raise ConfigError(
+            f"сервис '{service.name}': плагин '{service.plugin}' не найден. "
+            f"Доступные: {available}"
         )
     return plugin_cls(service)
 

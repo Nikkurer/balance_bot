@@ -12,6 +12,19 @@ logger = logging.getLogger(__name__)
 NotifyCallback = Callable[[str], Awaitable[None]]
 
 
+def _log_poll_details(service_name: str, status: ServiceStatus) -> None:
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    parts = []
+    if status.balance is not None:
+        currency = status.currency or ""
+        parts.append(f"баланс={status.balance:g} {currency}".strip())
+    if status.subscription_end is not None:
+        parts.append(f"подписка до={status.subscription_end.strftime('%Y-%m-%d')}")
+    if parts:
+        logger.debug("Опрос сервиса '%s': %s", service_name, ", ".join(parts))
+
+
 class ServicePoller:
     """Периодический опрос одного сервиса через плагин."""
 
@@ -30,11 +43,37 @@ class ServicePoller:
 
     async def poll_once(self) -> ServiceStatus:
         name = self.service.name
+        plugin_name = self.service.plugin
+
         try:
             status = await self.plugin.fetch_status()
         except Exception as exc:
-            logger.exception("Failed to poll %s", name)
+            logger.info(
+                "Опрос сервиса '%s' (плагин %s): неуспешно",
+                name,
+                plugin_name,
+            )
+            logger.debug(
+                "Опрос сервиса '%s': исключение — %s",
+                name,
+                exc,
+                exc_info=True,
+            )
             status = ServiceStatus(error=str(exc))
+        elif status.error:
+            logger.info(
+                "Опрос сервиса '%s' (плагин %s): неуспешно",
+                name,
+                plugin_name,
+            )
+            logger.debug("Опрос сервиса '%s': %s", name, status.error)
+        else:
+            logger.info(
+                "Опрос сервиса '%s' (плагин %s): успешно",
+                name,
+                plugin_name,
+            )
+            _log_poll_details(name, status)
 
         self.state.set_status(name, status)
 
