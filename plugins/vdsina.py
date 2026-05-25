@@ -1,0 +1,180 @@
+import logging
+from datetime import date, datetime, timezone
+
+import aiohttp
+
+from balance_bot.models import ServiceStatus
+from balance_bot.plugins.base import ServicePlugin
+
+logger = logging.getLogger(__name__)
+
+PLUGIN_NAME = "vdsina"
+
+BASE_URL_RU = "https://userapi.vdsina.ru/v1"
+BASE_URL_COM = "https://userapi.vdsina.com/v1"
+
+_BALANCE_FIELDS = frozenset({"real", "bonus", "partner", "total"})
+
+
+class VdsinaApiError(Exception):
+    pass
+
+
+class Plugin(ServicePlugin):
+    """Плагин VDSina Public API (balance + forecast)."""
+
+    def __init__(self, service) -> None:
+        super().__init__(service)
+        self._http: aiohttp.ClientSession | None = None
+
+    async def fetch_status(self) -> ServiceStatus:
+        cfg = self.service.plugin_config
+        token = cfg.get("api_token")
+        if not token or not str(token).strip():
+            return ServiceStatus(error="plugin_config.api_token обязателен")
+
+        base_url = _resolve_base_url(cfg)
+        balance_field = str(cfg.get("balance_field", "real")).lower()
+        if balance_field not in _BALANCE_FIELDS:
+            return ServiceStatus(
+                error=f"balance_field должен быть одним из: {', '.join(sorted(_BALANCE_FIELDS))}"
+            )
+
+        currency = cfg.get("currency")
+        now = datetime.now(timezone.utc)
+
+        try:
+            balance_payload = await self._get(base_url, token, "account.balance")
+            account_payload = await self._get(base_url, token, "account")
+        except VdsinaApiError as exc:
+            return ServiceStatus(error=str(exc), last_updated=now)
+        except aiohttp.ClientError as exc:
+            logger.exception("VDSina HTTP error for %s", self.service.name)
+            return ServiceStatus(error=f"сеть/API: {exc}", last_updated=now)
+
+        balance_data = _unwrap(balance_payload, "account.balance")
+        account_data = _unwrap(account_payload, "account")
+
+        balance = _pick_balance(balance_data, balance_field)
+        subscription_end = _parse_forecast(account_data.get("forecast"))
+
+        account = account_data.get("account") or {}
+        details = {
+            "base_url": base_url,
+            "balance_field": balance_field,
+            "real": _to_float(balance_data.get("real")),
+            "bonus": _to_float(balance_data.get("bonus")),
+            "partner": _to_float(balance_data.get("partner")),
+            "account_id": account.get("id"),
+            "account_name": account.get("name"),
+        }
+
+        return ServiceStatus(
+            balance=balance,
+            currency=str(currency) if currency else None,
+            subscription_end=subscription_end,
+            last_updated=now,
+            details=details,
+        )
+
+    async def close(self) -> None:
+        if self._http and not self._http.closed:
+            await self._http.close()
+        self._http = None
+
+    async def _get(self, base_url: str, token: str, path: str) -> dict:
+        url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+        headers = {
+            "Authorization": f"Bearer {token.strip()}",
+            "Accept": "application/json",
+        }
+        if self._http is None or self._http.closed:
+            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
+
+        async with self._http.get(url, headers=headers) as resp:
+            try:
+                payload = await resp.json(content_type=None)
+            except Exception as exc:
+                text = await resp.text()
+                raise VdsinaApiError(
+                    f"{path}: ответ не JSON (HTTP {resp.status}): {text[:200]}"
+                ) from exc
+
+            if resp.status >= 400:
+                msg = _api_message(payload) or resp.reason
+                raise VdsinaApiError(f"{path}: HTTP {resp.status} — {msg}")
+
+            if not isinstance(payload, dict):
+                raise VdsinaApiError(f"{path}: неожиданный формат ответа")
+
+            status = payload.get("status")
+            if status and status != "ok":
+                raise VdsinaApiError(f"{path}: {_api_message(payload) or status}")
+
+            return payload
+
+
+def _resolve_base_url(cfg: dict) -> str:
+    if raw := cfg.get("base_url"):
+        return str(raw).rstrip("/")
+
+    site = str(cfg.get("site", "ru")).lower()
+    if site in ("com", "vdsina.com", ".com"):
+        return BASE_URL_COM
+    return BASE_URL_RU
+
+
+def _unwrap(payload: dict, label: str) -> dict:
+    data = payload.get("data")
+    if isinstance(data, dict):
+        return data
+    raise VdsinaApiError(f"{label}: поле data отсутствует в ответе")
+
+
+def _api_message(payload: dict | None) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    return payload.get("status_msg") or payload.get("description")
+
+
+def _to_float(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pick_balance(data: dict, field: str) -> float | None:
+    if field == "total":
+        parts = [
+            _to_float(data.get("real")),
+            _to_float(data.get("bonus")),
+            _to_float(data.get("partner")),
+        ]
+        present = [p for p in parts if p is not None]
+        return sum(present) if present else None
+    return _to_float(data.get(field))
+
+
+def _parse_forecast(raw) -> datetime | None:
+    if not raw:
+        return None
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    if isinstance(raw, date):
+        return datetime(raw.year, raw.month, raw.day, tzinfo=timezone.utc)
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        if " " in text:
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        else:
+            dt = datetime.fromisoformat(text)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None

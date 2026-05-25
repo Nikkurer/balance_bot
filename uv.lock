@@ -159,12 +159,14 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiogram" },
+    { name = "aiohttp" },
     { name = "pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aiogram", specifier = ">=3.13,<4" },
+    { name = "aiohttp", specifier = ">=3.9,<4" },
     { name = "pyyaml", specifier = ">=6.0,<7" },
 ]
 

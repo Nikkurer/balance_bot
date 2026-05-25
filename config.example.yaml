@@ -7,6 +7,30 @@ telegram:
 plugins_dir: plugins
 
 services:
+  # --- VDSina: один плагин, два аккаунта (ru / com) — разные api_token ---
+  - name: "vdsina-ru"
+    plugin: vdsina
+    poll_interval_seconds: 3600
+    balance_threshold: 500.0
+    subscription_warn_days: 7
+    plugin_config:
+      api_token: "YOUR_VDSINA_RU_API_TOKEN"
+      site: ru
+      currency: RUB
+      balance_field: real   # real | bonus | partner | total
+
+  - name: "vdsina-com"
+    plugin: vdsina
+    poll_interval_seconds: 3600
+    balance_threshold: 10.0
+    subscription_warn_days: 7
+    plugin_config:
+      api_token: "YOUR_VDSINA_COM_API_TOKEN"
+      site: com
+      currency: USD
+      balance_field: real
+
+  # --- тестовый плагин без API ---
   - name: "demo-service"
     plugin: mock
     poll_interval_seconds: 300
@@ -15,5 +39,4 @@ services:
     plugin_config:
       balance: 50.0
       currency: RUB
-      # Дата отключения приходит от сервиса (плагин), бот её не вычисляет
       subscription_end: "2026-06-01T00:00:00+00:00"
