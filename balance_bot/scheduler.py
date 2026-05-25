@@ -60,20 +60,21 @@ class ServicePoller:
                 exc_info=True,
             )
             status = ServiceStatus(error=str(exc))
-        elif status.error:
-            logger.info(
-                "Опрос сервиса '%s' (плагин %s): неуспешно",
-                name,
-                plugin_name,
-            )
-            logger.debug("Опрос сервиса '%s': %s", name, status.error)
         else:
-            logger.info(
-                "Опрос сервиса '%s' (плагин %s): успешно",
-                name,
-                plugin_name,
-            )
-            _log_poll_details(name, status)
+            if status.error:
+                logger.info(
+                    "Опрос сервиса '%s' (плагин %s): неуспешно",
+                    name,
+                    plugin_name,
+                )
+                logger.debug("Опрос сервиса '%s': %s", name, status.error)
+            else:
+                logger.info(
+                    "Опрос сервиса '%s' (плагин %s): успешно",
+                    name,
+                    plugin_name,
+                )
+                _log_poll_details(name, status)
 
         self.state.set_status(name, status)
 
