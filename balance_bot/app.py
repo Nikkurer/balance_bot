@@ -7,7 +7,7 @@ from pathlib import Path
 from aiogram import Bot
 
 from balance_bot.bot import create_dispatcher, notify_users
-from balance_bot.config import load_config
+from balance_bot.config import ConfigError, load_config
 from balance_bot.plugins.loader import (
     create_plugin,
     init_plugins,
@@ -79,5 +79,8 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         asyncio.run(run(config_path, plugins_override))
+    except ConfigError as exc:
+        logger.error("Некорректная конфигурация:\n%s", exc)
+        sys.exit(1)
     except KeyboardInterrupt:
         logger.info("Stopped")
