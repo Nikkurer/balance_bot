@@ -9,6 +9,7 @@
 | mock | [mock.md](mock.md) | Тест без внешнего API |
 | vdsina | [vdsina.md](vdsina.md) | VDSina (.ru / .com) |
 | aeza | [aeza.md](aeza.md) | Aeza (.ru / .net) |
+| cloud | [cloud.md](cloud.md) | Cloud.ru Evolution |
 
 Новый плагин: скопируйте [PLUGIN_TEMPLATE.md](PLUGIN_TEMPLATE.md) → `<имя>.md` и заполните.
 

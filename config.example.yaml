@@ -7,7 +7,7 @@ telegram:
 plugins_dir: plugins
 
 services:
-  # Документация: plugins/vdsina.md, plugins/aeza.md, plugins/mock.md
+  # Документация: plugins/vdsina.md, plugins/aeza.md, plugins/cloud.md, plugins/mock.md
   # --- VDSina: один плагин, два аккаунта (ru / com) — разные api_token ---
   - name: "vdsina-ru"
     plugin: vdsina
@@ -52,6 +52,21 @@ services:
       site: ru
       currency: RUB
       # auth: api_key             # по умолчанию для my.aeza.ru
+
+  - name: "cloud-main"
+    plugin: cloud
+    poll_interval_seconds: 3600
+    balance_threshold: 500.0
+    subscription_warn_days: 7
+    plugin_config:
+      key_id: "YOUR_CLOUD_KEY_ID"
+      key_secret: "YOUR_CLOUD_KEY_SECRET"
+      agreement_id: "YOUR_AGREEMENT_UUID"
+      # customer_id: "YOUR_CUSTOMER_UUID"
+      currency: RUB
+      balance_field: balance
+      # auth: key              # key | bearer | api_key
+      # balance_path: "v1/agreements/{agreement_id}/balance"
 
   # --- тестовый плагин без API ---
   - name: "demo-service"
