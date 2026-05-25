@@ -134,13 +134,75 @@ jobs:
 - ограничьте `workflow_dispatch` для продакшена;
 - на сервере `config.yaml` уже должен существовать до первого деплоя.
 
-### 5. Публикация образа в GHCR (опционально)
+### 5. Автоматический push образа при релизе (GHCR)
 
-Если хотите тянуть готовый образ вместо `build` на сервере:
+Workflow: [`.github/workflows/release.yml`](../.github/workflows/release.yml)
 
-1. Включите GitHub Packages для репозитория.
-2. Добавьте workflow с `push: true` в `docker/build-push-action` и тегом `ghcr.io/<org>/balance-bot:latest`.
-3. На сервере в `docker-compose.yml` замените `build: .` на `image: ghcr.io/<org>/balance-bot:latest` и выполните `docker compose pull`.
+Запускается при **публикации** релиза в GitHub (`Release` → *Publish release*, не черновик).
+
+#### Что нужно один раз в репозитории
+
+1. **Settings → Actions → General → Workflow permissions**  
+   Выберите **Read and write permissions** (чтобы `GITHUB_TOKEN` мог писать в Packages).
+
+2. **Settings → Actions → General** (внизу) — при необходимости разрешите создание пакетов для workflow.
+
+3. Создайте релиз с тегом в формате semver, например `v1.0.0` (префикс `v` поддерживается).
+
+#### Что делает workflow
+
+1. Checkout кода по тегу релиза  
+2. `docker login` в `ghcr.io` через `GITHUB_TOKEN`  
+3. Сборка и **push** образа с тегами:
+   - `ghcr.io/<owner>/<repo>:1.0.0` — версия без `v`
+   - `ghcr.io/<owner>/<repo>:1.0` — major.minor
+   - `ghcr.io/<owner>/<repo>:latest` — только для **не** pre-release
+
+Имя образа — в нижнем регистре, как требует GHCR (`owner/repo` из `GITHUB_REPOSITORY`).
+
+#### Создание релиза
+
+```text
+GitHub → Releases → Draft a new release
+  Tag: v1.0.0
+  Target: main
+  → Publish release
+```
+
+После успешного workflow образ появится в **Packages** репозитория (или профиля org).
+
+#### Запуск на сервере через готовый образ
+
+`docker-compose.yml` вместо локальной сборки:
+
+```yaml
+services:
+  balance-bot:
+    image: ghcr.io/<OWNER>/<REPO>:1.0.0   # или :latest
+    container_name: balance-bot
+    restart: unless-stopped
+    command: ["balance-bot", "-c", "/config/config.yaml", "--plugins-dir", "/plugins"]
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - ./plugins:/plugins:ro
+```
+
+Первый pull с приватного GHCR (если репозиторий private):
+
+```bash
+echo "$GITHUB_PAT" | docker login ghcr.io -u <github-username> --password-stdin
+docker compose pull
+docker compose up -d
+```
+
+PAT нужен scope `read:packages` (для private package).
+
+Обновление на новый релиз:
+
+```bash
+docker compose pull
+docker compose up -d
+```
 
 ## Статус проверок в README
 

@@ -83,3 +83,5 @@ services:
 При push и pull request в `main` запускается [GitHub Actions](.github/workflows/ci.yml): проверка Python, плагинов и сборка Docker-образа.
 
 Подробно: развёртывание на сервер, секреты, опциональный autodeploy — [docs/ci-cd.md](docs/ci-cd.md).
+
+При **публикации релиза** на GitHub образ автоматически пушится в GHCR — см. [docs/ci-cd.md](docs/ci-cd.md#5-автоматический-push-образа-при-релизе-ghcr).
