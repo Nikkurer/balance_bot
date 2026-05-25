@@ -1,0 +1,11 @@
+# Локальная разработка и сервер с исходниками: сборка образа из Dockerfile.
+# Запуск: docker compose -f docker-compose.dev.yml up -d --build
+services:
+  balance-bot:
+    build: .
+    container_name: balance-bot
+    restart: unless-stopped
+    command: ["balance-bot", "-c", "/config/config.yaml", "--plugins-dir", "/plugins"]
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - ./plugins:/plugins:ro

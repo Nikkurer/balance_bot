@@ -1,6 +1,9 @@
+# Продакшен: готовый образ из GHCR (после публикации релиза).
+# Скопируйте .env.example → .env и укажите тег образа.
+# Запуск: docker compose pull && docker compose up -d
 services:
   balance-bot:
-    build: .
+    image: ${BALANCE_BOT_IMAGE:?Задайте BALANCE_BOT_IMAGE в файле .env — см. .env.example}
     container_name: balance-bot
     restart: unless-stopped
     command: ["balance-bot", "-c", "/config/config.yaml", "--plugins-dir", "/plugins"]

@@ -55,4 +55,4 @@ plugins/
 - `subscription_end` — дата от API сервиса, бот её не вычисляет
 - Секреты и параметры — в `plugin_config` сервиса в конфиге
 
-После добавления файла перезапустите бот (`docker compose restart balance-bot`).
+После добавления файла перезапустите бот (`docker compose restart balance-bot` или с `-f docker-compose.dev.yml`).

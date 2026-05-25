@@ -18,21 +18,37 @@ cp config.example.yaml config.yaml
 # Отредактируйте config.yaml: токен бота, ваш user id, сервисы
 ```
 
-### Docker Compose (рекомендуется)
+### Docker Compose
+
+Два файла:
+
+| Файл | Назначение |
+|------|------------|
+| [`docker-compose.dev.yml`](docker-compose.dev.yml) | Сборка из исходников (`build: .`) — разработка и сервер с git-клоном |
+| [`docker-compose.yml`](docker-compose.yml) | Готовый образ из [GHCR](docs/ci-cd.md#5-автоматический-push-образа-при-релизе-ghcr) — продакшен на сервере |
+
+Конфиг и плагины в обоих случаях монтируются с хоста: `./config.yaml`, `./plugins/`.
+
+**Разработка / сборка локально:**
 
 ```bash
-docker compose up -d --build
+docker compose -f docker-compose.dev.yml up -d --build
+docker compose -f docker-compose.dev.yml logs -f balance-bot
+```
+
+**Продакшен (образ после релиза):**
+
+```bash
+cp .env.example .env
+# В .env: BALANCE_BOT_IMAGE=ghcr.io/<owner>/<repo>:1.0.0
+docker compose pull
+docker compose up -d
 docker compose logs -f balance-bot
 ```
 
-Остановка: `docker compose down`.
+Остановка: `docker compose down` (для dev добавьте `-f docker-compose.dev.yml`).
 
-Конфиг и плагины монтируются с хоста:
-
-- `./config.yaml` → `/config/config.yaml`
-- `./plugins/` → `/plugins/`
-
-После правок перезапустите: `docker compose restart balance-bot`.
+После правок `config.yaml` или плагинов: `docker compose restart balance-bot` (или с `-f docker-compose.dev.yml`).
 
 ### Локально (uv)
 

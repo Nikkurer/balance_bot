@@ -47,38 +47,51 @@ docker build -t balance-bot:local .
 flowchart LR
   dev[Push в main] --> ci[GitHub Actions CI]
   ci -->|успех| server[Ваш VPS / домашний сервер]
-  server --> compose[docker compose pull/build]
+  server --> compose[docker compose pull]
   compose --> bot[balance-bot]
 ```
 
 ### 1. Подготовка сервера (один раз)
 
 - Docker и Docker Compose v2
-- Клон репозитория или только каталог с `docker-compose.yml`, `config.yaml`, `plugins/`
+- Каталог с `docker-compose.yml`, `.env`, `config.yaml`, `plugins/` (клон репозитория или только эти файлы)
 - Файл `config.yaml` **только на сервере**, в `.gitignore`
 
 ```bash
 git clone https://github.com/<ORG>/<REPO>.git balance_bot
 cd balance_bot
 cp config.example.yaml config.yaml
-# отредактируйте config.yaml
+cp .env.example .env
+# config.yaml — токен и сервисы
+# .env — BALANCE_BOT_IMAGE=ghcr.io/<org>/<repo>:1.0.0
 ```
 
-### 2. Обновление после изменений в main
+Для приватного GHCR один раз: `docker login ghcr.io` (PAT с `read:packages`).
 
-На сервере в каталоге проекта:
+### 2. Обновление на новый релиз
+
+На сервере обновите тег в `.env` (или оставьте `:latest`), затем:
 
 ```bash
-git pull
-docker compose build --pull
+docker compose pull
 docker compose up -d
 docker compose logs -f --tail=50 balance-bot
 ```
 
-Только перезапуск без пересборки (если меняли только `config.yaml` или плагины):
+Только перезапуск без смены образа (если меняли `config.yaml` или плагины):
 
 ```bash
 docker compose restart balance-bot
+```
+
+### 2a. Сборка на сервере из исходников (без GHCR)
+
+Если образ из registry не используете:
+
+```bash
+git pull
+docker compose -f docker-compose.dev.yml build --pull
+docker compose -f docker-compose.dev.yml up -d
 ```
 
 ### 3. Секреты в GitHub (опционально)
@@ -123,7 +136,7 @@ jobs:
             set -e
             cd ${{ secrets.DEPLOY_PATH }}
             git pull
-            docker compose build
+            docker compose pull
             docker compose up -d
             docker compose ps
 ```
@@ -173,19 +186,14 @@ GitHub → Releases → Draft a new release
 
 #### Запуск на сервере через готовый образ
 
-`docker-compose.yml` вместо локальной сборки:
+Файл [`docker-compose.yml`](../docker-compose.yml) — образ из переменной `BALANCE_BOT_IMAGE` (см. [`.env.example`](../.env.example)).
 
-```yaml
-services:
-  balance-bot:
-    image: ghcr.io/<OWNER>/<REPO>:1.0.0   # или :latest
-    container_name: balance-bot
-    restart: unless-stopped
-    command: ["balance-bot", "-c", "/config/config.yaml", "--plugins-dir", "/plugins"]
-    volumes:
-      - ./config.yaml:/config/config.yaml:ro
-      - ./plugins:/plugins:ro
+```bash
+cp .env.example .env
+# BALANCE_BOT_IMAGE=ghcr.io/<OWNER>/<REPO>:1.0.0
 ```
+
+Локальная сборка вместо registry: [`docker-compose.dev.yml`](../docker-compose.dev.yml).
 
 Первый pull с приватного GHCR (если репозиторий private):
 

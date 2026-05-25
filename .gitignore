@@ -11,3 +11,6 @@ wheels/
 
 # Local config (may contain secrets)
 config.yaml
+
+# Локальные переменные для docker compose (образ GHCR)
+.env
