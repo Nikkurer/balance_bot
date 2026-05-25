@@ -5,7 +5,15 @@ from typing import Any
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
-from aiogram.types import BotCommand, Message, TelegramObject
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeChat,
+    BotCommandScopeDefault,
+    MenuButtonCommands,
+    Message,
+    TelegramObject,
+)
 
 from balance_bot.models import AppConfig
 from balance_bot.notifications import format_status_message
@@ -20,9 +28,30 @@ BOT_COMMANDS: list[BotCommand] = [
 ]
 
 
-async def register_bot_commands(bot: Bot) -> None:
-    """Регистрация команд в меню Telegram (setMyCommands)."""
-    await bot.set_my_commands(BOT_COMMANDS)
+async def register_bot_commands(bot: Bot, *, chat_id: int | None = None) -> None:
+    """Регистрация команд в меню Telegram (setMyCommands + кнопка «Команды»).
+
+    Telegram выбирает список по scope и language_code; для ru-клиентов без
+    отдельного набора команды могут не отображаться. Для личного чата приоритет
+    у BotCommandScopeChat — при /start обновляем и его.
+    """
+    scopes: list[BotCommandScopeDefault | BotCommandScopeAllPrivateChats | BotCommandScopeChat] = [
+        BotCommandScopeAllPrivateChats(),
+        BotCommandScopeDefault(),
+    ]
+    if chat_id is not None:
+        scopes.insert(0, BotCommandScopeChat(chat_id=chat_id))
+
+    for scope in scopes:
+        for language_code in (None, "ru"):
+            await bot.set_my_commands(
+                BOT_COMMANDS,
+                scope=scope,
+                language_code=language_code,
+            )
+
+    # Кнопка слева от поля ввода — явно открывает список команд (не Web App / default).
+    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
 
 
 class AuthMiddleware(BaseMiddleware):
@@ -53,6 +82,11 @@ def create_dispatcher(
 
     @dp.message(Command("start"))
     async def cmd_start(message: Message) -> None:
+        try:
+            await register_bot_commands(message.bot, chat_id=message.chat.id)
+        except Exception as exc:
+            logger.warning("Не удалось обновить меню команд: %s", exc)
+
         await message.answer(
             "Бот отслеживает баланс и срок подписки на подключённых сервисах.\n\n"
             "Команды:\n"
