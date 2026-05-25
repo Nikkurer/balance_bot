@@ -30,15 +30,27 @@ services:
       currency: USD
       balance_field: real
 
-  - name: "aeza"
+  - name: "aeza-net"
     plugin: aeza
     poll_interval_seconds: 3600
     balance_threshold: 100.0
     subscription_warn_days: 7
     plugin_config:
-      api_token: "YOUR_AEZA_API_TOKEN"
+      api_token: "YOUR_AEZA_NET_API_TOKEN"
+      site: net
       currency: RUB
-      # use_services_forecast: true   # дата из /services, если нет в /desktop
+      # auth: bearer              # по умолчанию для core.aeza.net
+
+  - name: "aeza-ru"
+    plugin: aeza
+    poll_interval_seconds: 3600
+    balance_threshold: 100.0
+    subscription_warn_days: 7
+    plugin_config:
+      api_token: "YOUR_AEZA_RU_API_TOKEN"
+      site: ru
+      currency: RUB
+      # auth: api_key             # по умолчанию для my.aeza.ru
 
   # --- тестовый плагин без API ---
   - name: "demo-service"

@@ -93,30 +93,48 @@ plugins/
 
 ## Aeza (`aeza.py`)
 
-Работает с [aeza.ru](https://aeza.ru) / [aeza.net](https://aeza.net) через API `core.aeza.net`.
+Аккаунты **aeza.ru** и **aeza.net** разные — нужны **разные токены** и параметр `site`.
+
+### Как выбирается API (`site`)
+
+| `site` | URL по умолчанию | Авторизация по умолчанию | Эндпоинт баланса |
+|--------|------------------|--------------------------|------------------|
+| `net` (по умолчанию) | `https://core.aeza.net/api` | `Bearer` | `GET /desktop` |
+| `ru` | `https://my.aeza.ru/api` | `X-API-Key` | `GET /accounts?current=1` |
+
+Переопределение: `base_url` и/или `auth: bearer | api_key` в `plugin_config`.
 
 ### Как получить API-токен
 
-1. Войдите в [личный кабинет](https://my.aeza.net/).
-2. Откройте **Настройки** → **Безопасность** или раздел **API-ключи**: [my.aeza.net/settings/security](https://my.aeza.net/settings/security).
-3. Создайте API-ключ (можно ограничить по IP).
-4. Скопируйте токен в `plugin_config.api_token`.
+**aeza.net**
 
-Токен передаётся как `Authorization: Bearer …`. При смене пароля может потребоваться новый ключ.
+1. [my.aeza.net](https://my.aeza.net/) → **Настройки** → [API-ключи](https://my.aeza.net/settings/apikeys).
+2. Создайте ключ, укажите в конфиге с `site: net`.
+
+**aeza.ru**
+
+1. [my.aeza.ru](https://my.aeza.ru/) (или панель aeza.ru) → настройки → API-ключи.
+2. Токен в конфиге с `site: ru`.
+
+Токены не взаимозаменяемы между `.ru` и `.net`.
 
 ### Пример конфигурации
 
 ```yaml
-- name: aeza
+- name: aeza-net
   plugin: aeza
-  poll_interval_seconds: 3600
-  balance_threshold: 100
-  subscription_warn_days: 7
   plugin_config:
     api_token: "..."
+    site: net
+    currency: RUB
+
+- name: aeza-ru
+  plugin: aeza
+  plugin_config:
+    api_token: "..."
+    site: ru
     currency: RUB
 ```
 
-- **balance** — `GET /api/desktop` → `data.balance.value`
-- **subscription_end** — из ответа desktop или (если включено) минимальная дата среди услуг в `GET /api/services`
-- **use_services_forecast** — `true` по умолчанию; `false`, если нужен только desktop
+- **balance** — из desktop (`net` + Bearer) или accounts (`ru` + API-ключ)
+- **subscription_end** — из ответа API или минимальная дата в `GET /services` (`use_services_forecast: true` по умолчанию)

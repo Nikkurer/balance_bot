@@ -10,7 +10,10 @@ logger = logging.getLogger(__name__)
 
 PLUGIN_NAME = "aeza"
 
-DEFAULT_BASE_URL = "https://core.aeza.net/api"
+# .net — backend core.aeza.net (как в aeza-net-sdk)
+BASE_URL_NET = "https://core.aeza.net/api"
+# .ru — API личного кабинета aeza.ru (по аналогии с официальным my.aeza.net/api)
+BASE_URL_RU = "https://my.aeza.ru/api"
 
 _FORECAST_KEYS = (
     "forecast",
@@ -29,7 +32,7 @@ class AezaApiError(Exception):
 
 
 class Plugin(ServicePlugin):
-    """Плагин Aeza (aeza.ru / aeza.net) — desktop API."""
+    """Плагин Aeza (aeza.ru / aeza.net)."""
 
     def __init__(self, service) -> None:
         super().__init__(service)
@@ -41,14 +44,26 @@ class Plugin(ServicePlugin):
         if not token or not str(token).strip():
             return ServiceStatus(error="plugin_config.api_token обязателен")
 
-        base_url = str(cfg.get("base_url", DEFAULT_BASE_URL)).rstrip("/")
+        base_url = _resolve_base_url(cfg)
+        auth = _resolve_auth(cfg, base_url)
         currency_override = cfg.get("currency")
         use_services = bool(cfg.get("use_services_forecast", True))
         now = datetime.now(timezone.utc)
 
         try:
-            desktop = await self._get(f"{base_url}/desktop", token)
-            data = _unwrap_data(desktop, "desktop")
+            if auth == "bearer":
+                payload = await self._get(f"{base_url}/desktop", token, auth)
+                data = _unwrap_data(payload, "desktop")
+                forecast_source = "desktop"
+            else:
+                payload = await self._get(
+                    f"{base_url}/accounts",
+                    token,
+                    auth,
+                    params={"current": "1", "extra": "1"},
+                )
+                data = _unwrap_account(payload)
+                forecast_source = "accounts"
         except AezaApiError as exc:
             return ServiceStatus(error=str(exc), last_updated=now)
         except aiohttp.ClientError as exc:
@@ -62,7 +77,11 @@ class Plugin(ServicePlugin):
         subscription_end = _find_forecast(data)
         if subscription_end is None and use_services:
             try:
-                subscription_end = await self._forecast_from_services(base_url, token)
+                subscription_end = await self._forecast_from_services(
+                    base_url, token, auth
+                )
+                if subscription_end is not None:
+                    forecast_source = "services"
             except (AezaApiError, aiohttp.ClientError) as exc:
                 logger.debug(
                     "Aeza: не удалось получить дату из services для %s: %s",
@@ -72,12 +91,11 @@ class Plugin(ServicePlugin):
 
         details = {
             "base_url": base_url,
+            "auth": auth,
             "balance_raw": data.get("balance"),
         }
         if subscription_end is not None:
-            details["forecast_source"] = (
-                "services" if use_services and not _find_forecast(data) else "desktop"
-            )
+            details["forecast_source"] = forecast_source
 
         return ServiceStatus(
             balance=balance,
@@ -92,10 +110,13 @@ class Plugin(ServicePlugin):
             await self._http.close()
         self._http = None
 
-    async def _forecast_from_services(self, base_url: str, token: str) -> datetime | None:
+    async def _forecast_from_services(
+        self, base_url: str, token: str, auth: str
+    ) -> datetime | None:
         payload = await self._get(
             f"{base_url}/services",
             token,
+            auth,
             params={"offset": "0", "count": "100", "sort": ""},
         )
         items = _unwrap_data(payload, "services").get("items") or []
@@ -124,13 +145,11 @@ class Plugin(ServicePlugin):
         self,
         url: str,
         token: str,
+        auth: str,
         *,
         params: dict[str, str] | None = None,
     ) -> dict:
-        headers = {
-            "Authorization": f"Bearer {token.strip()}",
-            "Accept": "application/json",
-        }
+        headers = {"Accept": "application/json", **_auth_headers(token, auth)}
         if self._http is None or self._http.closed:
             self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
 
@@ -161,11 +180,55 @@ class Plugin(ServicePlugin):
             return payload
 
 
+def _resolve_base_url(cfg: dict) -> str:
+    if raw := cfg.get("base_url"):
+        return str(raw).rstrip("/")
+
+    site = str(cfg.get("site", "net")).lower()
+    if site in ("ru", "aeza.ru", ".ru"):
+        return BASE_URL_RU
+    return BASE_URL_NET
+
+
+def _resolve_auth(cfg: dict, base_url: str) -> str:
+    if raw := cfg.get("auth"):
+        auth = str(raw).lower()
+        if auth in ("bearer", "api_key"):
+            return auth
+        raise AezaApiError("auth должен быть bearer или api_key")
+
+    if "my.aeza." in base_url:
+        return "api_key"
+    return "bearer"
+
+
+def _auth_headers(token: str, auth: str) -> dict[str, str]:
+    token = token.strip()
+    if auth == "api_key":
+        return {"X-API-Key": token}
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _unwrap_data(payload: dict, label: str) -> dict:
     data = payload.get("data")
     if isinstance(data, dict):
         return data
     raise AezaApiError(f"{label}: поле data отсутствует в ответе")
+
+
+def _unwrap_account(payload: dict) -> dict:
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise AezaApiError("accounts: поле data отсутствует в ответе")
+
+    items = data.get("items")
+    if isinstance(items, list) and items:
+        first = items[0]
+        if isinstance(first, dict):
+            return first
+    if isinstance(data, dict) and ("balance" in data or "id" in data):
+        return data
+    raise AezaApiError("accounts: не найден текущий аккаунт")
 
 
 def _api_message(payload: dict | None) -> str | None:
@@ -181,6 +244,8 @@ def _parse_balance(data: dict) -> tuple[float | None, str | None]:
     balance_obj = data.get("balance")
     if isinstance(balance_obj, dict):
         value = balance_obj.get("value")
+        if value is None:
+            value = balance_obj.get("amount")
         currency = balance_obj.get("currency") or balance_obj.get("code")
         return _to_float(value), str(currency) if currency else None
     if balance_obj is not None:
