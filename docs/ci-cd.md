@@ -4,7 +4,7 @@
 
 ## CI — что запускается автоматически
 
-Workflow: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
+Workflow: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (actions на Node.js 24: `checkout@v6`, `setup-uv@v6`, `setup-buildx-action@v4`, `build-push-action@v7`)
 
 | Событие | Ветки |
 |---------|--------|
@@ -111,7 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.repository == 'ORG/REPO'  # замените на свой репозиторий
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1
