@@ -90,3 +90,33 @@ plugins/
 - **balance** — из `GET /account.balance` (`balance_field`, по умолчанию `real`)
 - **subscription_end** — `forecast` из `GET /account` (дата отключения от API)
 - Опционально: `base_url` вместо `site` для явного URL API
+
+## Aeza (`aeza.py`)
+
+Работает с [aeza.ru](https://aeza.ru) / [aeza.net](https://aeza.net) через API `core.aeza.net`.
+
+### Как получить API-токен
+
+1. Войдите в [личный кабинет](https://my.aeza.net/).
+2. Откройте **Настройки** → **Безопасность** или раздел **API-ключи**: [my.aeza.net/settings/security](https://my.aeza.net/settings/security).
+3. Создайте API-ключ (можно ограничить по IP).
+4. Скопируйте токен в `plugin_config.api_token`.
+
+Токен передаётся как `Authorization: Bearer …`. При смене пароля может потребоваться новый ключ.
+
+### Пример конфигурации
+
+```yaml
+- name: aeza
+  plugin: aeza
+  poll_interval_seconds: 3600
+  balance_threshold: 100
+  subscription_warn_days: 7
+  plugin_config:
+    api_token: "..."
+    currency: RUB
+```
+
+- **balance** — `GET /api/desktop` → `data.balance.value`
+- **subscription_end** — из ответа desktop или (если включено) минимальная дата среди услуг в `GET /api/services`
+- **use_services_forecast** — `true` по умолчанию; `false`, если нужен только desktop
