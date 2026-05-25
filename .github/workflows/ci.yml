@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Проверка Python
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Установка uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Зависимости
+        run: uv sync --frozen
+
+      - name: Синтаксис и импорты
+        run: uv run python -m compileall -q balance_bot plugins
+
+      - name: Загрузка плагинов и валидация конфига
+        run: |
+          uv run python - <<'PY'
+          from pathlib import Path
+
+          from balance_bot.config import load_config
+          from balance_bot.plugins.loader import (
+              ensure_plugins_for_services,
+              init_plugins,
+              registered_plugins,
+          )
+
+          plugins_dir = Path("plugins").resolve()
+          init_plugins(plugins_dir)
+          names = registered_plugins()
+          assert "mock" in names, f"mock plugin missing, got {names}"
+
+          config = load_config("config.ci.yaml")
+          ensure_plugins_for_services(config.services)
+          print("plugins:", ", ".join(sorted(names)))
+          PY
+
+      - name: Точка входа
+        run: uv run balance-bot --help
+
+  docker:
+    name: Сборка Docker-образа
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: balance-bot:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

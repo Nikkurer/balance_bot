@@ -1,0 +1,18 @@
+# Минимальный конфиг для CI (без секретов, только mock-плагин)
+telegram:
+  bot_token: "123456789:AAHFakeTokenForCiValidationOnly"
+  allowed_user_ids:
+    - 1
+
+plugins_dir: plugins
+
+services:
+  - name: "ci-demo"
+    plugin: mock
+    poll_interval_seconds: 300
+    balance_threshold: 1.0
+    subscription_warn_days: 7
+    plugin_config:
+      balance: 100.0
+      currency: RUB
+      subscription_end: "2099-01-01T00:00:00+00:00"

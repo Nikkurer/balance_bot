@@ -77,3 +77,9 @@ services:
 - Общее и контракт: [plugins/README.md](plugins/README.md)
 - Документация по сервисам: [mock](plugins/mock.md), [vdsina](plugins/vdsina.md), [aeza](plugins/aeza.md), [cloud](plugins/cloud.md)
 - Шаблон для нового плагина: [PLUGIN_TEMPLATE.md](plugins/PLUGIN_TEMPLATE.md)
+
+## CI/CD (GitHub)
+
+При push и pull request в `main` запускается [GitHub Actions](.github/workflows/ci.yml): проверка Python, плагинов и сборка Docker-образа.
+
+Подробно: развёртывание на сервер, секреты, опциональный autodeploy — [docs/ci-cd.md](docs/ci-cd.md).
