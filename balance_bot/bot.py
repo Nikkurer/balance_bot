@@ -90,5 +90,10 @@ async def notify_users(bot: Bot, user_ids: list[int], text: str) -> None:
     for uid in user_ids:
         try:
             await bot.send_message(uid, text, parse_mode=ParseMode.HTML)
-        except Exception:
-            logger.exception("Failed to send notification to %s", uid)
+        except Exception as exc:
+            logger.error(
+                "Не удалось отправить уведомление пользователю %s: %s",
+                uid,
+                exc,
+            )
+            logger.debug("Детали отправки уведомления %s", uid, exc_info=True)

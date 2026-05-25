@@ -5,8 +5,10 @@ import sys
 from pathlib import Path
 
 from aiogram import Bot
+from aiogram.client.session.aiohttp import AiohttpSession
 
 from balance_bot.bot import create_dispatcher, notify_users, register_bot_commands
+from balance_bot.logging_setup import setup_logging
 from balance_bot.config import ConfigError, load_config
 from balance_bot.plugins.loader import (
     create_plugin,
@@ -32,7 +34,11 @@ async def run(config_path: Path, plugins_dir_override: Path | None = None) -> No
     ensure_plugins_for_services(config.services)
 
     state = StateStore()
-    bot = Bot(token=config.bot_token)
+    # Увеличенный таймаут снижает ложные обрывы long polling в Docker/WSL
+    bot = Bot(
+        token=config.bot_token,
+        session=AiohttpSession(timeout=90),
+    )
 
     async def on_notify(text: str) -> None:
         await notify_users(bot, config.allowed_user_ids, text)
@@ -73,10 +79,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("-v", "--verbose", action="store_true", help="Подробные логи")
     args = parser.parse_args(argv)
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    setup_logging(verbose=args.verbose)
 
     config_path = Path(args.config)
     if not config_path.exists():
