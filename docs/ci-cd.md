@@ -13,10 +13,11 @@ Workflow: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (actions н�
 
 ### Job `check` (Python)
 
-1. `uv sync --frozen` — зависимости по `uv.lock`
-2. `compileall` — синтаксис `balance_bot/` и `plugins/`
-3. Загрузка всех плагинов из `plugins/`, валидация [`config.ci.yaml`](../config.ci.yaml) (mock, без реальных токенов)
-4. `balance-bot --help` — проверка CLI
+1. `uv sync --frozen --group dev` — зависимости по `uv.lock` (включая pytest)
+2. `pytest` — unit-тесты в каталоге `tests/`
+3. `compileall` — синтаксис `balance_bot/` и `plugins/`
+4. Загрузка всех плагинов из `plugins/`, валидация [`config.ci.yaml`](../config.ci.yaml) (mock, без реальных токенов)
+5. `balance-bot --help` — проверка CLI
 
 ### Job `docker`
 
@@ -25,7 +26,8 @@ Workflow: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (actions н�
 ### Локально повторить CI
 
 ```bash
-uv sync --frozen
+uv sync --frozen --group dev
+uv run pytest
 uv run python -m compileall -q balance_bot plugins
 uv run python -c "
 from pathlib import Path

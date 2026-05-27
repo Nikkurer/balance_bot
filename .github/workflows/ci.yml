@@ -24,7 +24,10 @@ jobs:
           enable-cache: true
 
       - name: Зависимости
-        run: uv sync --frozen
+        run: uv sync --frozen --group dev
+
+      - name: Unit-тесты
+        run: uv run pytest
 
       - name: Синтаксис и импорты
         run: uv run python -m compileall -q balance_bot plugins

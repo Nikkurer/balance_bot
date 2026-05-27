@@ -57,6 +57,13 @@ uv sync
 uv run balance-bot -c config.yaml
 ```
 
+### Тесты
+
+```bash
+uv sync --group dev
+uv run pytest
+```
+
 Узнать свой Telegram user id можно у [@userinfobot](https://t.me/userinfobot).
 
 ## Команды бота
