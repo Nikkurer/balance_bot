@@ -1,3 +1,5 @@
+"""Точка входа: загрузка конфига, планировщик опроса, long polling Telegram."""
+
 import argparse
 import asyncio
 import logging
@@ -24,6 +26,13 @@ logger = logging.getLogger(__name__)
 
 
 async def run(config_path: Path, plugins_dir_override: Path | None = None) -> None:
+    """Запускает бота: плагины, опрос сервисов, Telegram polling.
+
+    Args:
+        config_path: Путь к YAML-конфигурации.
+        plugins_dir_override: Каталог плагинов; если ``None``, берётся из конфига
+            относительно каталога конфига.
+    """
     config = load_config(config_path)
     plugins_dir = plugins_dir_override or resolve_plugins_dir(
         Path(config.plugins_dir), config_path
@@ -65,6 +74,14 @@ async def run(config_path: Path, plugins_dir_override: Path | None = None) -> No
 
 
 def main(argv: list[str] | None = None) -> None:
+    """CLI: разбор аргументов, настройка логов, ``asyncio.run(run)``.
+
+    Args:
+        argv: Аргументы командной строки; ``None`` — ``sys.argv``.
+
+    Raises:
+        SystemExit: Код 1 при отсутствии конфига или ``ConfigError``.
+    """
     parser = argparse.ArgumentParser(description="Balance bot — мониторинг балансов и подписок")
     parser.add_argument(
         "-c",

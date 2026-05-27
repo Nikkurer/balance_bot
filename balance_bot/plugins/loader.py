@@ -1,3 +1,5 @@
+"""Обнаружение и регистрация плагинов из каталога ``plugins/``."""
+
 import importlib
 import logging
 import sys
@@ -13,13 +15,36 @@ _REGISTRY: dict[str, type[ServicePlugin]] = {}
 
 
 def resolve_plugins_dir(plugins_dir: Path, config_path: Path) -> Path:
+    """Разрешает относительный путь к каталогу плагинов.
+
+    Args:
+        plugins_dir: Путь из конфига (относительный или абсолютный).
+        config_path: Путь к файлу конфигурации (база для относительного пути).
+
+    Returns:
+        Абсолютный путь к каталогу плагинов.
+    """
     if plugins_dir.is_absolute():
         return plugins_dir
     return (config_path.parent / plugins_dir).resolve()
 
 
 def discover_plugins(plugins_dir: Path) -> dict[str, type[ServicePlugin]]:
-    """Загрузить все плагины из каталога (файлы *.py и пакеты с __init__.py)."""
+    """Загружает все плагины из каталога (файлы ``*.py`` и пакеты).
+
+    Каталог добавляется в ``sys.path``. Модули с ошибками импорта пропускаются
+    с записью в лог.
+
+    Args:
+        plugins_dir: Каталог с ``mock.py``, ``vdsina.py`` и т.д.
+
+    Returns:
+        Словарь ``PLUGIN_NAME`` → класс плагина.
+
+    Raises:
+        FileNotFoundError: Каталог не существует.
+        ValueError: Дубликат ``PLUGIN_NAME`` у двух модулей.
+    """
     plugins_dir = plugins_dir.resolve()
     if not plugins_dir.is_dir():
         raise FileNotFoundError(f"Plugins directory not found: {plugins_dir}")
@@ -67,16 +92,33 @@ def discover_plugins(plugins_dir: Path) -> dict[str, type[ServicePlugin]]:
 
 
 def init_plugins(plugins_dir: Path) -> None:
+    """Сканирует каталог и заполняет глобальный реестр плагинов.
+
+    Args:
+        plugins_dir: Каталог плагинов.
+    """
     global _REGISTRY
     _REGISTRY = discover_plugins(plugins_dir)
 
 
 def registered_plugins() -> list[str]:
+    """Возвращает отсортированный список имён загруженных плагинов.
+
+    Returns:
+        Имена для поля ``plugin`` в конфиге.
+    """
     return sorted(_REGISTRY)
 
 
 def ensure_plugins_for_services(services: list[ServiceConfig]) -> None:
-    """Проверить, что для каждого сервиса из конфига есть загруженный плагин."""
+    """Проверяет, что для каждого сервиса из конфига есть загруженный плагин.
+
+    Args:
+        services: Список сервисов из ``AppConfig``.
+
+    Raises:
+        ConfigError: Хотя бы один ``plugin`` не найден в реестре.
+    """
     available = registered_plugins()
     errors: list[str] = []
 
@@ -108,6 +150,17 @@ def ensure_plugins_for_services(services: list[ServiceConfig]) -> None:
 
 
 def create_plugin(service: ServiceConfig) -> ServicePlugin:
+    """Создаёт экземпляр плагина для сервиса.
+
+    Args:
+        service: Конфигурация с полем ``plugin``.
+
+    Returns:
+        Новый экземпляр ``ServicePlugin``.
+
+    Raises:
+        ConfigError: Плагин не зарегистрирован.
+    """
     plugin_cls = _REGISTRY.get(service.plugin)
     if plugin_cls is None:
         available = ", ".join(registered_plugins()) or "(none loaded)"
@@ -119,6 +172,21 @@ def create_plugin(service: ServiceConfig) -> ServicePlugin:
 
 
 def _extract_plugin(module, default_name: str) -> tuple[str, type[ServicePlugin]]:
+    """Извлекает имя и класс плагина из загруженного модуля.
+
+    Ожидается ``PLUGIN_NAME`` и класс ``Plugin``, иначе единственный подкласс
+    ``ServicePlugin``.
+
+    Args:
+        module: Импортированный модуль плагина.
+        default_name: Имя файла/пакета, если ``PLUGIN_NAME`` не задан.
+
+    Returns:
+        Пара ``(plugin_name, plugin_cls)``.
+
+    Raises:
+        ValueError: Класс не найден или неоднозначен.
+    """
     plugin_name = getattr(module, "PLUGIN_NAME", default_name)
 
     plugin_cls = getattr(module, "Plugin", None)

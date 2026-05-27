@@ -1,3 +1,5 @@
+"""Тестовый плагин: данные из ``plugin_config`` без HTTP-запросов."""
+
 from datetime import datetime, timezone
 
 from balance_bot.models import ServiceStatus
@@ -7,9 +9,15 @@ PLUGIN_NAME = "mock"
 
 
 class Plugin(ServicePlugin):
-    """Тестовый плагин — данные из plugin_config, без внешних запросов."""
+    """Возвращает баланс и дату подписки из ``plugin_config``."""
 
     async def fetch_status(self) -> ServiceStatus:
+        """Собирает ``ServiceStatus`` из полей конфига плагина.
+
+        Returns:
+            Снимок с ``balance``, ``currency``, ``subscription_end`` (ISO),
+            ``last_updated`` в UTC.
+        """
         cfg = self.service.plugin_config
         subscription_end = None
         if raw_end := cfg.get("subscription_end"):

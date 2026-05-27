@@ -1,10 +1,22 @@
+"""Модели данных: снимок состояния сервиса и конфигурация приложения."""
+
 from dataclasses import dataclass, field
 from datetime import datetime
 
 
 @dataclass
 class ServiceStatus:
-    """Снимок состояния сервиса, полученный от плагина."""
+    """Снимок состояния сервиса, полученный от плагина.
+
+    Attributes:
+        balance: Текущий баланс или ``None``, если плагин не вернул значение.
+        currency: Код или символ валюты (например, ``RUB``).
+        subscription_end: Дата окончания подписки в UTC (или с tzinfo).
+        last_updated: Время последнего успешного опроса.
+        error: Текст ошибки опроса; при непустом значении остальные поля могут
+            отсутствовать.
+        details: Дополнительные поля от плагина (не показываются пользователю).
+    """
 
     balance: float | None = None
     currency: str | None = None
@@ -16,6 +28,18 @@ class ServiceStatus:
 
 @dataclass
 class ServiceConfig:
+    """Настройки мониторинга одного сервиса из YAML.
+
+    Attributes:
+        name: Уникальное имя сервиса в конфиге.
+        plugin: Имя зарегистрированного плагина (``PLUGIN_NAME``).
+        poll_interval_seconds: Интервал фонового опроса в секундах.
+        balance_threshold: Порог низкого баланса; ``None`` — не проверять.
+        subscription_warn_days: За сколько дней до ``subscription_end`` слать
+            алерт; ``None`` — не проверять.
+        plugin_config: Параметры, передаваемые в конструктор плагина.
+    """
+
     name: str
     plugin: str
     poll_interval_seconds: int
@@ -26,6 +50,15 @@ class ServiceConfig:
 
 @dataclass
 class AppConfig:
+    """Корневая конфигурация бота после загрузки YAML.
+
+    Attributes:
+        bot_token: Токен Telegram Bot API.
+        allowed_user_ids: Список Telegram user ID с доступом к боту.
+        services: Сервисы для мониторинга.
+        plugins_dir: Каталог с файлами плагинов (относительный или абсолютный).
+    """
+
     bot_token: str
     allowed_user_ids: list[int]
     services: list[ServiceConfig]

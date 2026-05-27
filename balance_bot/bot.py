@@ -1,3 +1,5 @@
+"""Telegram-бот: команды, авторизация, рассылка уведомлений."""
+
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -29,11 +31,15 @@ BOT_COMMANDS: list[BotCommand] = [
 
 
 async def register_bot_commands(bot: Bot, *, chat_id: int | None = None) -> None:
-    """Регистрация команд в меню Telegram (setMyCommands + кнопка «Команды»).
+    """Регистрирует команды бота в меню Telegram.
 
-    Telegram выбирает список по scope и language_code; для ru-клиентов без
-    отдельного набора команды могут не отображаться. Для личного чата приоритет
-    у BotCommandScopeChat — при /start обновляем и его.
+    Вызывает ``setMyCommands`` для нескольких scope и языков (в т.ч. ``ru``),
+    затем устанавливает кнопку меню «Команды``.
+
+    Args:
+        bot: Экземпляр aiogram ``Bot``.
+        chat_id: ID личного чата; если задан, команды также записываются в
+            ``BotCommandScopeChat`` (наивысший приоритет в личке).
     """
     scopes: list[BotCommandScopeDefault | BotCommandScopeAllPrivateChats | BotCommandScopeChat] = [
         BotCommandScopeAllPrivateChats(),
@@ -50,12 +56,18 @@ async def register_bot_commands(bot: Bot, *, chat_id: int | None = None) -> None
                 language_code=language_code,
             )
 
-    # Кнопка слева от поля ввода — явно открывает список команд (не Web App / default).
     await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
 
 
 class AuthMiddleware(BaseMiddleware):
+    """Отклоняет сообщения от пользователей вне ``allowed_user_ids``."""
+
     def __init__(self, allowed_user_ids: set[int]) -> None:
+        """Запоминает белый список ID.
+
+        Args:
+            allowed_user_ids: Разрешённые Telegram user ID.
+        """
         self.allowed_user_ids = allowed_user_ids
 
     async def __call__(
@@ -64,6 +76,16 @@ class AuthMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
+        """Пропускает обработчик только для разрешённых пользователей.
+
+        Args:
+            handler: Следующий обработчик в цепочке.
+            event: Входящее событие (сообщение и т.д.).
+            data: Контекст aiogram.
+
+        Returns:
+            Результат ``handler`` или ``None``, если доступ запрещён.
+        """
         if isinstance(event, Message):
             user_id = event.from_user.id if event.from_user else None
             if user_id not in self.allowed_user_ids:
@@ -77,6 +99,17 @@ def create_dispatcher(
     state: StateStore,
     on_refresh: Callable[[], Awaitable[None]] | None = None,
 ) -> Dispatcher:
+    """Создаёт ``Dispatcher`` с командами ``/start``, ``/status``, ``/refresh``.
+
+    Args:
+        config: Конфигурация (для списка разрешённых user ID).
+        state: Хранилище снимков для ``/status``.
+        on_refresh: Async-функция принудительного опроса всех сервисов;
+            ``None`` — команда ``/refresh`` отвечает «недоступен».
+
+    Returns:
+        Настроенный экземпляр ``Dispatcher``.
+    """
     dp = Dispatcher()
     dp.message.middleware(AuthMiddleware(set(config.allowed_user_ids)))
 
@@ -121,6 +154,15 @@ def create_dispatcher(
 
 
 async def notify_users(bot: Bot, user_ids: list[int], text: str) -> None:
+    """Отправляет HTML-сообщение каждому разрешённому пользователю.
+
+    Ошибки отправки логируются, исключения не пробрасываются.
+
+    Args:
+        bot: Экземпляр ``Bot``.
+        user_ids: Список Telegram chat/user ID.
+        text: Текст уведомления (HTML).
+    """
     for uid in user_ids:
         try:
             await bot.send_message(uid, text, parse_mode=ParseMode.HTML)

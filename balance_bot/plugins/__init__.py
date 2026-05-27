@@ -1,3 +1,5 @@
+"""Загрузка плагинов из каталога и фабрика ``ServicePlugin``."""
+
 from balance_bot.plugins.base import ServicePlugin
 from balance_bot.plugins.loader import (
     create_plugin,

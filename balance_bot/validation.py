@@ -1,9 +1,12 @@
+"""Семантическая валидация конфигурации после разбора YAML."""
+
 import re
 
 from balance_bot.models import AppConfig, ServiceConfig
 
+
 class ConfigError(Exception):
-    """Ошибка в конфигурации с перечнем проблем."""
+    """Ошибка конфигурации с перечнем проблем в сообщении."""
 
 
 _TOKEN_RE = re.compile(r"^\d+:[A-Za-z0-9_-]+$")
@@ -20,6 +23,14 @@ _PLACEHOLDER_TOKENS = frozenset(
 
 
 def validate_config(config: AppConfig) -> None:
+    """Проверяет обязательные поля и согласованность конфигурации.
+
+    Args:
+        config: Разобранный ``AppConfig``.
+
+    Raises:
+        ConfigError: Список проблем в тексте исключения (по одной строке на пункт).
+    """
     errors: list[str] = []
 
     token = (config.bot_token or "").strip()
@@ -63,6 +74,16 @@ def validate_config(config: AppConfig) -> None:
 def _validate_service(
     service: ServiceConfig, prefix: str, seen_names: set[str]
 ) -> list[str]:
+    """Проверяет одну запись в ``services``.
+
+    Args:
+        service: Конфигурация сервиса.
+        prefix: Префикс для сообщений (например, ``services[0]``).
+        seen_names: Уже встреченные имена сервисов (мутируется при успехе).
+
+    Returns:
+        Список строк с описанием ошибок (пустой, если всё в порядке).
+    """
     errors: list[str] = []
 
     name = (service.name or "").strip()

@@ -1,3 +1,5 @@
+"""Плагин Cloud.ru Evolution: баланс договора через organization API и IAM."""
+
 import logging
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -45,19 +47,29 @@ _DAYS_LEFT_KEYS = (
 
 
 class CloudApiError(Exception):
-    pass
+    """Ошибка IAM, organization API или разбора ответа Cloud.ru."""
 
 
 class Plugin(ServicePlugin):
-    """Плагин Cloud.ru Evolution (баланс договора через organization API)."""
+    """Опрашивает баланс договора (``agreement_id``) с кэшем IAM-токена."""
 
     def __init__(self, service) -> None:
+        """Создаёт плагин с HTTP-сессией и кэшем токена.
+
+        Args:
+            service: Конфигурация с ``key_id``/``key_secret`` или bearer/api_key.
+        """
         super().__init__(service)
         self._http: aiohttp.ClientSession | None = None
         self._cached_token: str | None = None
         self._token_expires_at: float = 0.0
 
     async def fetch_status(self) -> ServiceStatus:
+        """Получает баланс и дату окончания средств по договору.
+
+        Returns:
+            ``ServiceStatus`` с полями баланса/подписки или ``error``.
+        """
         cfg = self.service.plugin_config
         agreement_id = str(cfg.get("agreement_id") or "").strip()
         if not agreement_id:
@@ -112,11 +124,23 @@ class Plugin(ServicePlugin):
         )
 
     async def close(self) -> None:
+        """Закрывает HTTP-сессию и сбрасывает кэш IAM-токена."""
         if self._http and not self._http.closed:
             await self._http.close()
         self._http = None
 
     async def _resolve_token(self, cfg: dict) -> str:
+        """Возвращает bearer/api_key или получает IAM access_token по key_id/secret.
+
+        Args:
+            cfg: ``plugin_config`` сервиса.
+
+        Returns:
+            Строка токена для заголовка Authorization.
+
+        Raises:
+            CloudApiError: Нет учётных данных или пустой ответ IAM.
+        """
         auth = _resolve_auth_mode(cfg)
         if auth == "bearer":
             token = cfg.get("access_token") or cfg.get("api_token")
@@ -173,6 +197,20 @@ class Plugin(ServicePlugin):
     async def _fetch_balance_payload(
         self, base_url: str, token: str, cfg: dict, agreement_id: str
     ) -> dict:
+        """Перебирает типовые пути balance API до первого успешного ответа.
+
+        Args:
+            base_url: organization API base.
+            token: Токен авторизации.
+            cfg: ``plugin_config`` (``balance_path``, ``customer_id``, …).
+            agreement_id: UUID договора.
+
+        Returns:
+            JSON с полями баланса.
+
+        Raises:
+            CloudApiError: Ни один candidate path не подошёл.
+        """
         auth = _resolve_auth_mode(cfg)
         if custom := cfg.get("balance_path"):
             path = str(custom).format(
@@ -220,6 +258,18 @@ class Plugin(ServicePlugin):
     async def _get_json(
         self, base_url: str, path: str, token: str, cfg: dict, auth: str
     ) -> dict:
+        """GET к organization API.
+
+        Args:
+            base_url: Базовый URL.
+            path: Относительный или абсолютный путь.
+            token: Токен.
+            cfg: Конфиг (для совместимости сигнатуры).
+            auth: Режим ``key`` / ``bearer`` / ``api_key``.
+
+        Returns:
+            JSON-объект ответа.
+        """
         url = path if path.startswith("http") else f"{base_url}/{path.lstrip('/')}"
         return await self._request_json("GET", url, cfg, auth_header=_auth_header(token, auth))
 
@@ -232,6 +282,21 @@ class Plugin(ServicePlugin):
         json_body: dict | None = None,
         auth_header: dict[str, str] | None,
     ) -> dict:
+        """Универсальный HTTP-запрос с разбором JSON (IAM и organization API).
+
+        Args:
+            method: HTTP-метод.
+            url: Полный URL.
+            cfg: Конфиг (не используется напрямую, для расширений).
+            json_body: Тело POST (IAM token).
+            auth_header: Заголовки авторизации.
+
+        Returns:
+            Распарсенный объект.
+
+        Raises:
+            CloudApiError: HTTP ≥400 или не JSON.
+        """
         headers = {"Accept": "application/json"}
         if auth_header:
             headers.update(auth_header)
@@ -261,6 +326,17 @@ class Plugin(ServicePlugin):
 
 
 def _resolve_auth_mode(cfg: dict) -> str:
+    """Определяет режим auth: ``key`` (IAM), ``bearer`` или ``api_key``.
+
+    Args:
+        cfg: ``plugin_config``.
+
+    Returns:
+        Одна из строк ``key``, ``bearer``, ``api_key``.
+
+    Raises:
+        CloudApiError: Недопустимое значение ``auth``.
+    """
     if raw := cfg.get("auth"):
         auth = str(raw).lower()
         if auth in ("key", "bearer", "api_key"):
@@ -274,6 +350,15 @@ def _resolve_auth_mode(cfg: dict) -> str:
 
 
 def _auth_header(token: str, auth: str) -> dict[str, str]:
+    """Формирует заголовок Authorization для Cloud.ru API.
+
+    Args:
+        token: Секрет или access token.
+        auth: Режим авторизации.
+
+    Returns:
+        Словарь с ключом ``Authorization``.
+    """
     token = token.strip()
     if auth == "api_key":
         return {"Authorization": f"Api-Key {token}"}
@@ -281,6 +366,14 @@ def _auth_header(token: str, auth: str) -> dict[str, str]:
 
 
 def _api_message(payload: dict | None) -> str | None:
+    """Извлекает текст ошибки из JSON Cloud.ru.
+
+    Args:
+        payload: Тело ответа.
+
+    Returns:
+        Сообщение или ``None``.
+    """
     if not isinstance(payload, dict):
         return None
     err = payload.get("error")
@@ -292,12 +385,29 @@ def _api_message(payload: dict | None) -> str | None:
 
 
 def _looks_like_balance_payload(payload: dict) -> bool:
+    """Эвристика: похож ли JSON на ответ с балансом договора.
+
+    Args:
+        payload: Тело ответа candidate path.
+
+    Returns:
+        ``True``, если есть типовые ключи или вложенный баланс.
+    """
     if any(k in payload for k in ("balance", "money", "bonus", "agreement", "data")):
         return True
     return _find_balance_value(payload) is not None or _find_days_left(payload) is not None
 
 
 def _pick_balance(data: dict, field: str) -> float | None:
+    """Извлекает значение баланса по имени поля с обходом вложенных структур.
+
+    Args:
+        data: Фрагмент JSON ответа.
+        field: ``balance_field`` из конфига.
+
+    Returns:
+        Числовой баланс или ``None``.
+    """
     if field == "total":
         parts = [
             _pick_balance(data, "real"),
@@ -326,6 +436,15 @@ def _pick_balance(data: dict, field: str) -> float | None:
 
 
 def _find_balance_value(obj: dict, depth: int = 0) -> float | None:
+    """Рекурсивный поиск числового баланса в JSON.
+
+    Args:
+        obj: Вложенный объект.
+        depth: Глубина (лимит 5).
+
+    Returns:
+        Первое найденное число или ``None``.
+    """
     if depth > 5 or not isinstance(obj, dict):
         return None
     for key in ("balance", "money", "amount", "available", "value"):
@@ -342,6 +461,15 @@ def _find_balance_value(obj: dict, depth: int = 0) -> float | None:
 
 
 def _find_currency(obj: dict, depth: int = 0) -> str | None:
+    """Рекурсивный поиск кода валюты в JSON.
+
+    Args:
+        obj: Вложенный объект.
+        depth: Глубина (лимит 5).
+
+    Returns:
+        Строка валюты или ``None``.
+    """
     if depth > 5 or not isinstance(obj, dict):
         return None
     for key in ("currency", "currency_code", "currencyCode"):
@@ -356,6 +484,15 @@ def _find_currency(obj: dict, depth: int = 0) -> str | None:
 
 
 def _find_forecast(obj: dict, depth: int = 0) -> datetime | None:
+    """Рекурсивный поиск даты окончания средств по известным ключам.
+
+    Args:
+        obj: Вложенный объект ответа.
+        depth: Глубина (лимит 6).
+
+    Returns:
+        Дата в UTC или ``None``.
+    """
     if depth > 6 or not isinstance(obj, dict):
         return None
     for key in _FORECAST_KEYS:
@@ -372,6 +509,15 @@ def _find_forecast(obj: dict, depth: int = 0) -> datetime | None:
 
 
 def _find_days_left(obj: dict, depth: int = 0) -> int | None:
+    """Рекурсивный поиск поля «дней хватит баланса».
+
+    Args:
+        obj: Вложенный объект.
+        depth: Глубина (лимит 6).
+
+    Returns:
+        Целое число дней или ``None``.
+    """
     if depth > 6 or not isinstance(obj, dict):
         return None
     for key in _DAYS_LEFT_KEYS:
@@ -389,6 +535,15 @@ def _find_days_left(obj: dict, depth: int = 0) -> int | None:
 
 
 def _forecast_from_days_left(obj: dict, now: datetime) -> datetime | None:
+    """Вычисляет дату окончания как ``now + days_left``.
+
+    Args:
+        obj: JSON ответа с полем days_left.
+        now: Текущее время UTC.
+
+    Returns:
+        Прогнозная дата или ``None``.
+    """
     days = _find_days_left(obj)
     if days is None or days < 0:
         return None
@@ -396,6 +551,14 @@ def _forecast_from_days_left(obj: dict, now: datetime) -> datetime | None:
 
 
 def _to_float(value) -> float | None:
+    """Безопасно приводит значение к ``float``.
+
+    Args:
+        value: Значение из JSON.
+
+    Returns:
+        Число или ``None``.
+    """
     if value is None:
         return None
     try:
@@ -405,6 +568,14 @@ def _to_float(value) -> float | None:
 
 
 def _parse_datetime(raw) -> datetime | None:
+    """Парсит дату/время из ответа Cloud.ru API.
+
+    Args:
+        raw: ISO-строка, unix timestamp, ``date`` или ``datetime``.
+
+    Returns:
+        ``datetime`` в UTC или ``None``.
+    """
     if raw is None:
         return None
     if isinstance(raw, datetime):

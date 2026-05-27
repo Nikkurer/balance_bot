@@ -19,6 +19,14 @@ _CONNECTED_RE = re.compile(
 
 
 def _humanize_network_error(exc: BaseException) -> str:
+    """Преобразует исключение сети в короткое описание на русском.
+
+    Args:
+        exc: Исключение из aiogram/aiohttp.
+
+    Returns:
+        Текст для подстановки в сообщение лога.
+    """
     name = type(exc).__name__
     text = str(exc).lower()
 
@@ -38,7 +46,14 @@ def _humanize_network_error(exc: BaseException) -> str:
 
 
 def humanize_log_message(message: str) -> str | None:
-    """Вернуть понятный текст или None, если сообщение не трогаем."""
+    """Возвращает понятный текст для типовых сообщений aiogram.
+
+    Args:
+        message: Исходная строка ``record.getMessage()``.
+
+    Returns:
+        Переведённый текст или ``None``, если сообщение не меняем.
+    """
     if "Failed to fetch updates" in message:
         if "timeout" in message.lower():
             return (
@@ -75,6 +90,14 @@ def humanize_log_message(message: str) -> str | None:
 
 
 def _is_transient_telegram_failure(message: str) -> bool:
+    """Проверяет, является ли сбой получения updates ожидаемым (сеть/таймаут).
+
+    Args:
+        message: Исходное сообщение лога.
+
+    Returns:
+        ``True``, если уровень можно понизить до WARNING.
+    """
     return "Failed to fetch updates" in message and (
         "timeout" in message.lower()
         or "TelegramNetworkError" in message
@@ -83,9 +106,20 @@ def _is_transient_telegram_failure(message: str) -> bool:
 
 
 class HumanizeLogFilter(logging.Filter):
-    """Переписывает типовые сообщения aiogram на русский; снижает уровень ожидаемых сбоев."""
+    """Переписывает типовые сообщения aiogram на русский.
+
+    Снижает уровень ожидаемых сетевых сбоев long polling с ERROR до WARNING.
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Модифицирует ``record`` на месте и всегда пропускает запись.
+
+        Args:
+            record: Запись лога.
+
+        Returns:
+            Всегда ``True`` (запись не отбрасывается).
+        """
         if not record.name.startswith(_AIOGRAM_LOGGER_PREFIXES):
             return True
 
@@ -114,6 +148,11 @@ class HumanizeLogFilter(logging.Filter):
 
 
 def setup_logging(*, verbose: bool = False) -> None:
+    """Настраивает корневой логгер и фильтр humanize для aiogram.
+
+    Args:
+        verbose: Если ``True``, уровень DEBUG и подробные логи ``aiogram.event``.
+    """
     level = logging.DEBUG if verbose else logging.INFO
     root = logging.getLogger()
     root.setLevel(level)
@@ -128,5 +167,4 @@ def setup_logging(*, verbose: bool = False) -> None:
     for h in root.handlers:
         h.addFilter(HumanizeLogFilter())
 
-    # Шумные отладочные логи aiogram — только с -v
     logging.getLogger("aiogram.event").setLevel(logging.DEBUG if verbose else logging.WARNING)

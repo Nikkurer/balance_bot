@@ -1,3 +1,5 @@
+"""Загрузка и разбор YAML-конфигурации приложения."""
+
 from pathlib import Path
 
 import yaml
@@ -7,6 +9,17 @@ from balance_bot.validation import ConfigError, validate_config
 
 
 def load_config(path: str | Path) -> AppConfig:
+    """Читает YAML-файл и возвращает проверенную конфигурацию.
+
+    Args:
+        path: Путь к ``config.yaml`` или аналогу.
+
+    Returns:
+        Объект ``AppConfig`` после ``validate_config``.
+
+    Raises:
+        ConfigError: Ошибка чтения файла, разбора YAML или валидации полей.
+    """
     path = Path(path)
     try:
         with path.open(encoding="utf-8") as f:

@@ -1,3 +1,5 @@
+"""Плагин VDSina Public API: баланс и прогноз окончания средств (forecast)."""
+
 import logging
 from datetime import date, datetime, timezone
 
@@ -17,17 +19,27 @@ _BALANCE_FIELDS = frozenset({"real", "bonus", "partner", "total"})
 
 
 class VdsinaApiError(Exception):
-    pass
+    """Ошибка ответа или логики VDSina API."""
 
 
 class Plugin(ServicePlugin):
-    """Плагин VDSina Public API (balance + forecast)."""
+    """Опрашивает ``account.balance`` и ``account`` на userapi.vdsina.ru/com."""
 
     def __init__(self, service) -> None:
+        """Создаёт плагин с ленивой HTTP-сессией.
+
+        Args:
+            service: Конфигурация с ``plugin_config`` (``api_token``, ``site``, …).
+        """
         super().__init__(service)
         self._http: aiohttp.ClientSession | None = None
 
     async def fetch_status(self) -> ServiceStatus:
+        """Запрашивает баланс и дату forecast из VDSina API.
+
+        Returns:
+            ``ServiceStatus`` с балансом и ``subscription_end`` или ``error``.
+        """
         cfg = self.service.plugin_config
         token = cfg.get("api_token")
         if not token or not str(token).strip():
@@ -78,11 +90,25 @@ class Plugin(ServicePlugin):
         )
 
     async def close(self) -> None:
+        """Закрывает ``aiohttp.ClientSession``."""
         if self._http and not self._http.closed:
             await self._http.close()
         self._http = None
 
     async def _get(self, base_url: str, token: str, path: str) -> dict:
+        """Выполняет GET к VDSina API и проверяет ``status: ok``.
+
+        Args:
+            base_url: Базовый URL (ru или com).
+            token: Bearer-токен из ``plugin_config.api_token``.
+            path: Путь ресурса, например ``account.balance``.
+
+        Returns:
+            Распарсенный JSON-объект ответа.
+
+        Raises:
+            VdsinaApiError: HTTP ≥400, не JSON или ``status != ok``.
+        """
         url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
         headers = {
             "Authorization": f"Bearer {token.strip()}",
@@ -115,6 +141,14 @@ class Plugin(ServicePlugin):
 
 
 def _resolve_base_url(cfg: dict) -> str:
+    """Возвращает базовый URL API по ``site`` или ``base_url`` в конфиге.
+
+    Args:
+        cfg: ``plugin_config`` сервиса.
+
+    Returns:
+        ``BASE_URL_RU`` или ``BASE_URL_COM``.
+    """
     if raw := cfg.get("base_url"):
         return str(raw).rstrip("/")
 
@@ -125,6 +159,18 @@ def _resolve_base_url(cfg: dict) -> str:
 
 
 def _unwrap(payload: dict, label: str) -> dict:
+    """Извлекает объект ``data`` из обёртки VDSina API.
+
+    Args:
+        payload: Тело ответа API.
+        label: Имя ресурса для сообщения об ошибке.
+
+    Returns:
+        Словарь ``data``.
+
+    Raises:
+        VdsinaApiError: Поле ``data`` отсутствует или не объект.
+    """
     data = payload.get("data")
     if isinstance(data, dict):
         return data
@@ -132,12 +178,28 @@ def _unwrap(payload: dict, label: str) -> dict:
 
 
 def _api_message(payload: dict | None) -> str | None:
+    """Достаёт текст ошибки из JSON ответа VDSina.
+
+    Args:
+        payload: Тело ответа или ``None``.
+
+    Returns:
+        Сообщение или ``None``.
+    """
     if not isinstance(payload, dict):
         return None
     return payload.get("status_msg") or payload.get("description")
 
 
 def _to_float(value) -> float | None:
+    """Безопасно приводит значение к ``float``.
+
+    Args:
+        value: Число или строка из API.
+
+    Returns:
+        Число или ``None`` при ошибке преобразования.
+    """
     if value is None:
         return None
     try:
@@ -147,6 +209,15 @@ def _to_float(value) -> float | None:
 
 
 def _pick_balance(data: dict, field: str) -> float | None:
+    """Выбирает поле баланса (``real``, ``bonus``, ``partner``, ``total``).
+
+    Args:
+        data: Объект ``account.balance`` из API.
+        field: Имя поля из ``plugin_config.balance_field``.
+
+    Returns:
+        Сумма или значение поля.
+    """
     if field == "total":
         parts = [
             _to_float(data.get("real")),
@@ -159,6 +230,14 @@ def _pick_balance(data: dict, field: str) -> float | None:
 
 
 def _parse_forecast(raw) -> datetime | None:
+    """Парсит дату прогноза окончания средств из ответа ``account``.
+
+    Args:
+        raw: Строка ISO, ``date``, ``datetime`` или пустое значение.
+
+    Returns:
+        Дата в UTC или ``None``.
+    """
     if not raw:
         return None
     if isinstance(raw, datetime):

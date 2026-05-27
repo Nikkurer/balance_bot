@@ -1,14 +1,33 @@
+"""Оценка алертов и форматирование сообщений для Telegram (HTML)."""
+
 from datetime import datetime, timedelta, timezone
 
 from balance_bot.models import ServiceConfig, ServiceStatus
 
 
 def _utc_now() -> datetime:
+    """Возвращает текущее время в UTC.
+
+    Returns:
+        Осознанный ``datetime`` с ``timezone.utc``.
+    """
     return datetime.now(timezone.utc)
 
 
 def evaluate_alerts(service: ServiceConfig, status: ServiceStatus) -> set[str]:
-    """Определить активные предупреждения по текущему снимку состояния."""
+    """Определяет активные предупреждения по текущему снимку состояния.
+
+    При ``status.error`` возвращается только ``{"error"}`` — пороги баланса
+    и подписки не проверяются.
+
+    Args:
+        service: Конфигурация сервиса с порогами.
+        status: Снимок после опроса плагина.
+
+    Returns:
+        Множество идентификаторов алертов: ``low_balance``,
+        ``subscription_ending``, ``error``.
+    """
     alerts: set[str] = set()
 
     if status.error:
@@ -34,6 +53,15 @@ def evaluate_alerts(service: ServiceConfig, status: ServiceStatus) -> set[str]:
 
 
 def format_status_message(service_name: str, status: ServiceStatus) -> str:
+    """Форматирует блок статуса одного сервиса для команды ``/status``.
+
+    Args:
+        service_name: Отображаемое имя сервиса.
+        status: Снимок из ``StateStore``.
+
+    Returns:
+        HTML-текст (жирное имя, эмодзи-метки).
+    """
     lines = [f"<b>{service_name}</b>"]
 
     if status.error:
@@ -57,6 +85,16 @@ def format_status_message(service_name: str, status: ServiceStatus) -> str:
 
 
 def format_alert_message(service_name: str, alert: str, status: ServiceStatus) -> str:
+    """Форматирует push-уведомление при появлении нового алерта.
+
+    Args:
+        service_name: Имя сервиса из конфига.
+        alert: Тип алерта (``low_balance``, ``subscription_ending``, ``error``).
+        status: Снимок, на основе которого сработал алерт.
+
+    Returns:
+        HTML-текст для ``send_message``.
+    """
     if alert == "low_balance":
         currency = status.currency or ""
         return (

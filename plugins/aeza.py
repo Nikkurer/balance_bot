@@ -1,3 +1,5 @@
+"""Плагин Aeza (aeza.ru / aeza.net): баланс и дата окончания средств."""
+
 import logging
 from datetime import date, datetime, timezone
 
@@ -28,17 +30,27 @@ _FORECAST_KEYS = (
 
 
 class AezaApiError(Exception):
-    pass
+    """Ошибка ответа или логики Aeza API."""
 
 
 class Plugin(ServicePlugin):
-    """Плагин Aeza (aeza.ru / aeza.net)."""
+    """Опрашивает desktop/accounts API Aeza (.net bearer, .ru api_key)."""
 
     def __init__(self, service) -> None:
+        """Создаёт плагин с ленивой HTTP-сессией.
+
+        Args:
+            service: Конфигурация с ``plugin_config`` (``api_token``, ``site``, …).
+        """
         super().__init__(service)
         self._http: aiohttp.ClientSession | None = None
 
     async def fetch_status(self) -> ServiceStatus:
+        """Запрашивает баланс и ближайшую дату окончания средств.
+
+        Returns:
+            ``ServiceStatus`` или снимок с ``error`` при сбое API.
+        """
         cfg = self.service.plugin_config
         token = cfg.get("api_token")
         if not token or not str(token).strip():
@@ -106,6 +118,7 @@ class Plugin(ServicePlugin):
         )
 
     async def close(self) -> None:
+        """Закрывает ``aiohttp.ClientSession``."""
         if self._http and not self._http.closed:
             await self._http.close()
         self._http = None
@@ -113,6 +126,16 @@ class Plugin(ServicePlugin):
     async def _forecast_from_services(
         self, base_url: str, token: str, auth: str
     ) -> datetime | None:
+        """Ищет минимальную дату forecast среди услуг ``/services``.
+
+        Args:
+            base_url: Базовый URL API.
+            token: Токен авторизации.
+            auth: Режим ``bearer`` или ``api_key``.
+
+        Returns:
+            Ближайшая дата в UTC или ``None``.
+        """
         payload = await self._get(
             f"{base_url}/services",
             token,
@@ -149,6 +172,20 @@ class Plugin(ServicePlugin):
         *,
         params: dict[str, str] | None = None,
     ) -> dict:
+        """Выполняет GET к Aeza API.
+
+        Args:
+            url: Полный URL запроса.
+            token: Токен из ``plugin_config``.
+            auth: ``bearer`` или ``api_key``.
+            params: Query-параметры.
+
+        Returns:
+            Распарсенный JSON.
+
+        Raises:
+            AezaApiError: HTTP ≥400, не JSON или поле ``error`` в теле.
+        """
         headers = {"Accept": "application/json", **_auth_headers(token, auth)}
         if self._http is None or self._http.closed:
             self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
@@ -181,6 +218,14 @@ class Plugin(ServicePlugin):
 
 
 def _resolve_base_url(cfg: dict) -> str:
+    """Возвращает ``BASE_URL_RU`` или ``BASE_URL_NET`` по ``site``/``base_url``.
+
+    Args:
+        cfg: ``plugin_config`` сервиса.
+
+    Returns:
+        Базовый URL без завершающего слэша.
+    """
     if raw := cfg.get("base_url"):
         return str(raw).rstrip("/")
 
@@ -191,6 +236,18 @@ def _resolve_base_url(cfg: dict) -> str:
 
 
 def _resolve_auth(cfg: dict, base_url: str) -> str:
+    """Определяет способ авторизации (bearer / api_key).
+
+    Args:
+        cfg: ``plugin_config``.
+        base_url: URL API (для эвристики my.aeza.ru → api_key).
+
+    Returns:
+        ``"bearer"`` или ``"api_key"``.
+
+    Raises:
+        AezaApiError: Неверное значение ``auth`` в конфиге.
+    """
     if raw := cfg.get("auth"):
         auth = str(raw).lower()
         if auth in ("bearer", "api_key"):
@@ -203,6 +260,15 @@ def _resolve_auth(cfg: dict, base_url: str) -> str:
 
 
 def _auth_headers(token: str, auth: str) -> dict[str, str]:
+    """Формирует заголовки Authorization или X-API-Key.
+
+    Args:
+        token: Секрет из конфига.
+        auth: Режим авторизации.
+
+    Returns:
+        Словарь заголовков для aiohttp.
+    """
     token = token.strip()
     if auth == "api_key":
         return {"X-API-Key": token}
@@ -210,6 +276,18 @@ def _auth_headers(token: str, auth: str) -> dict[str, str]:
 
 
 def _unwrap_data(payload: dict, label: str) -> dict:
+    """Извлекает ``data`` из обёртки ответа Aeza.
+
+    Args:
+        payload: JSON ответа.
+        label: Метка для ошибки.
+
+    Returns:
+        Объект ``data``.
+
+    Raises:
+        AezaApiError: ``data`` отсутствует.
+    """
     data = payload.get("data")
     if isinstance(data, dict):
         return data
@@ -217,6 +295,17 @@ def _unwrap_data(payload: dict, label: str) -> dict:
 
 
 def _unwrap_account(payload: dict) -> dict:
+    """Возвращает текущий аккаунт из ответа ``/accounts``.
+
+    Args:
+        payload: JSON ответа.
+
+    Returns:
+        Словарь аккаунта с полем ``balance``.
+
+    Raises:
+        AezaApiError: Аккаунт не найден в ``data.items``.
+    """
     data = payload.get("data")
     if not isinstance(data, dict):
         raise AezaApiError("accounts: поле data отсутствует в ответе")
@@ -232,6 +321,14 @@ def _unwrap_account(payload: dict) -> dict:
 
 
 def _api_message(payload: dict | None) -> str | None:
+    """Достаёт текст ошибки из JSON Aeza.
+
+    Args:
+        payload: Тело ответа.
+
+    Returns:
+        Сообщение или ``None``.
+    """
     if not isinstance(payload, dict):
         return None
     err = payload.get("error")
@@ -241,6 +338,14 @@ def _api_message(payload: dict | None) -> str | None:
 
 
 def _parse_balance(data: dict) -> tuple[float | None, str | None]:
+    """Парсит баланс и валюту из объекта аккаунта/desktop.
+
+    Args:
+        data: Словарь из API.
+
+    Returns:
+        Пара ``(balance, currency)``.
+    """
     balance_obj = data.get("balance")
     if isinstance(balance_obj, dict):
         value = balance_obj.get("value")
@@ -254,6 +359,14 @@ def _parse_balance(data: dict) -> tuple[float | None, str | None]:
 
 
 def _to_float(value) -> float | None:
+    """Безопасно приводит значение к ``float``.
+
+    Args:
+        value: Значение из JSON.
+
+    Returns:
+        Число или ``None``.
+    """
     if value is None:
         return None
     try:
@@ -263,6 +376,15 @@ def _to_float(value) -> float | None:
 
 
 def _find_forecast(obj: dict, depth: int = 0) -> datetime | None:
+    """Рекурсивно ищет поле даты окончания средств в JSON.
+
+    Args:
+        obj: Вложенный объект ответа.
+        depth: Текущая глубина рекурсии (лимит 6).
+
+    Returns:
+        Первая найденная дата в UTC или ``None``.
+    """
     if depth > 6 or not isinstance(obj, dict):
         return None
     for key in _FORECAST_KEYS:
@@ -279,6 +401,14 @@ def _find_forecast(obj: dict, depth: int = 0) -> datetime | None:
 
 
 def _parse_datetime(raw) -> datetime | None:
+    """Парсит дату/время из разных форматов Aeza API.
+
+    Args:
+        raw: ISO-строка, unix timestamp, ``date`` или ``datetime``.
+
+    Returns:
+        ``datetime`` в UTC или ``None``.
+    """
     if raw is None:
         return None
     if isinstance(raw, datetime):
