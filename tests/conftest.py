@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from balance_bot.models import AppConfig, ServiceConfig, ServiceStatus
+from balance_bot.timezone import set_bot_timezone
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PLUGINS_DIR = PROJECT_ROOT / "plugins"
@@ -60,3 +61,9 @@ def make_app_config(make_service) -> Callable[..., AppConfig]:
 def utc_now() -> datetime:
     """Фиксированное «сейчас» для тестов алертов."""
     return datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def reset_bot_timezone() -> None:
+    """Сбрасывает timezone бота между тестами."""
+    set_bot_timezone("UTC")

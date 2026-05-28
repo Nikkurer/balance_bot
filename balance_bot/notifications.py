@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 
 from balance_bot.models import ServiceConfig, ServiceStatus
+from balance_bot.timezone import to_bot_timezone
 
 
 def _utc_now() -> datetime:
@@ -73,13 +74,12 @@ def format_status_message(service_name: str, status: ServiceStatus) -> str:
         lines.append(f"💰 Баланс: {status.balance:g} {currency}".strip())
 
     if status.subscription_end is not None:
-        end = status.subscription_end
-        if end.tzinfo is None:
-            end = end.replace(tzinfo=timezone.utc)
-        lines.append(f"📅 Подписка до: {end.strftime('%Y-%m-%d %H:%M UTC')}")
+        end = to_bot_timezone(status.subscription_end)
+        lines.append(f"📅 Подписка до: {end.strftime('%Y-%m-%d %H:%M %Z')}")
 
     if status.last_updated:
-        lines.append(f"🕐 Обновлено: {status.last_updated.strftime('%Y-%m-%d %H:%M UTC')}")
+        updated = to_bot_timezone(status.last_updated)
+        lines.append(f"🕐 Обновлено: {updated.strftime('%Y-%m-%d %H:%M %Z')}")
 
     return "\n".join(lines)
 
@@ -103,9 +103,7 @@ def format_alert_message(service_name: str, alert: str, status: ServiceStatus) -
         )
     if alert == "subscription_ending":
         end = status.subscription_end
-        if end and end.tzinfo is None:
-            end = end.replace(tzinfo=timezone.utc)
-        end_str = end.strftime("%Y-%m-%d %H:%M UTC") if end else "неизвестно"
+        end_str = to_bot_timezone(end).strftime("%Y-%m-%d %H:%M %Z") if end else "неизвестно"
         return f"⚠️ <b>{service_name}</b>: подписка заканчивается {end_str}"
     if alert == "error":
         return f"❌ <b>{service_name}</b>: ошибка опроса — {status.error}"

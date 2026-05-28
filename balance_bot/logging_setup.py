@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # Логгеры aiogram, чьи сообщения переписываем
 _AIOGRAM_LOGGER_PREFIXES = ("aiogram",)
@@ -147,11 +149,26 @@ class HumanizeLogFilter(logging.Filter):
         return True
 
 
-def setup_logging(*, verbose: bool = False) -> None:
+class BotTimezoneFormatter(logging.Formatter):
+    """Formatter с заданной IANA timezone для поля ``asctime``."""
+
+    def __init__(self, fmt: str, timezone_name: str) -> None:
+        super().__init__(fmt)
+        self._tz = ZoneInfo(timezone_name)
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        dt = datetime.fromtimestamp(record.created, tz=self._tz)
+        if datefmt:
+            return dt.strftime(datefmt)
+        return dt.isoformat(sep=" ", timespec="seconds")
+
+
+def setup_logging(*, verbose: bool = False, timezone_name: str = "UTC") -> None:
     """Настраивает корневой логгер и фильтр humanize для aiogram.
 
     Args:
         verbose: Если ``True``, уровень DEBUG и подробные логи ``aiogram.event``.
+        timezone_name: IANA timezone для timestamps в логах.
     """
     level = logging.DEBUG if verbose else logging.INFO
     root = logging.getLogger()
@@ -159,12 +176,11 @@ def setup_logging(*, verbose: bool = False) -> None:
 
     if not root.handlers:
         handler = logging.StreamHandler()
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-        )
+        handler.setFormatter(BotTimezoneFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s", timezone_name))
         root.addHandler(handler)
 
     for h in root.handlers:
+        h.setFormatter(BotTimezoneFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s", timezone_name))
         h.addFilter(HumanizeLogFilter())
 
     logging.getLogger("aiogram.event").setLevel(logging.DEBUG if verbose else logging.WARNING)

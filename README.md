@@ -78,6 +78,7 @@ uv run pytest
 
 ```yaml
 plugins_dir: plugins   # в Docker: /plugins
+timezone: Europe/Moscow  # IANA timezone для времени в сообщениях и логах
 
 telegram:
   bot_token: "..."

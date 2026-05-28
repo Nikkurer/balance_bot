@@ -2,7 +2,11 @@
 
 import logging
 
-from balance_bot.logging_setup import HumanizeLogFilter, humanize_log_message, setup_logging
+from balance_bot.logging_setup import (
+    BotTimezoneFormatter,
+    HumanizeLogFilter,
+    humanize_log_message,
+)
 
 
 def test_humanize_failed_fetch_updates_timeout() -> None:
@@ -35,3 +39,19 @@ def test_filter_lowers_transient_error_to_warning() -> None:
     assert filt.filter(record) is True
     assert record.levelno == logging.WARNING
     assert "Telegram" in record.getMessage()
+
+
+def test_bot_timezone_formatter_uses_selected_zone() -> None:
+    formatter = BotTimezoneFormatter("%(asctime)s %(message)s", "Europe/Moscow")
+    record = logging.LogRecord(
+        name="test",
+        level=logging.INFO,
+        pathname="",
+        lineno=0,
+        msg="hello",
+        args=(),
+        exc_info=None,
+    )
+    record.created = 0
+    rendered = formatter.format(record)
+    assert "1970-01-01 03:00:00" in rendered

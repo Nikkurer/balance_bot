@@ -15,6 +15,7 @@ def test_load_config_ci_file() -> None:
     assert config.allowed_user_ids == [1]
     assert len(config.services) == 1
     assert config.services[0].plugin == "mock"
+    assert config.timezone == "UTC"
 
 
 def test_load_config_missing_file(tmp_path: Path) -> None:
@@ -37,6 +38,7 @@ telegram:
   bot_token: "999888777:ZZZ_TestToken_abc"
   allowed_user_ids: [42]
 plugins_dir: plugins
+timezone: Europe/Moscow
 services:
   - name: demo
     plugin: mock
@@ -50,6 +52,7 @@ services:
     assert config.allowed_user_ids == [42]
     assert config.services[0].name == "demo"
     assert config.services[0].poll_interval_seconds == 120
+    assert config.timezone == "Europe/Moscow"
 
 
 def test_load_config_missing_telegram_section(tmp_path: Path) -> None:

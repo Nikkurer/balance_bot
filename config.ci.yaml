@@ -5,6 +5,7 @@ telegram:
     - 1
 
 plugins_dir: plugins
+timezone: UTC
 
 services:
   - name: "ci-demo"

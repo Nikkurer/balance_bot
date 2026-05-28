@@ -86,12 +86,16 @@ def load_config(path: str | Path) -> AppConfig:
     plugins_dir = raw.get("plugins_dir", "plugins")
     if not isinstance(plugins_dir, str):
         raise ConfigError("plugins_dir: должен быть строкой")
+    timezone_name = raw.get("timezone", "UTC")
+    if not isinstance(timezone_name, str):
+        raise ConfigError("timezone: должен быть строкой (IANA, например Europe/Moscow)")
 
     config = AppConfig(
         bot_token=bot_token,
         allowed_user_ids=allowed_user_ids,
         services=services,
         plugins_dir=plugins_dir,
+        timezone=timezone_name,
     )
     validate_config(config)
     return config

@@ -5,6 +5,8 @@ telegram:
 
 # Каталог с плагинами (файлы .py или пакеты); в Docker задаётся через compose
 plugins_dir: plugins
+# Часовая зона бота (IANA): используется в сообщениях и timestamp логов
+timezone: UTC
 
 services:
   # Документация: plugins/vdsina.md, plugins/aeza.md, plugins/cloud.md, plugins/mock.md

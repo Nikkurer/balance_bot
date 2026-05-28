@@ -40,6 +40,11 @@ def test_empty_plugins_dir_raises(make_app_config) -> None:
         validate_config(make_app_config(plugins_dir="   "))
 
 
+def test_invalid_timezone_raises(make_app_config) -> None:
+    with pytest.raises(ConfigError, match="timezone"):
+        validate_config(make_app_config(timezone="Mars/Phobos"))
+
+
 def test_no_services_raises(make_app_config) -> None:
     with pytest.raises(ConfigError, match="services"):
         validate_config(make_app_config(services=[]))

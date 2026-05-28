@@ -11,6 +11,7 @@ from balance_bot.notifications import (
     format_alert_message,
     format_status_message,
 )
+from balance_bot.timezone import set_bot_timezone
 
 
 class TestEvaluateAlerts:
@@ -92,6 +93,7 @@ class TestFormatMessages:
         assert "❌" in text
 
     def test_format_status_with_balance_and_subscription(self) -> None:
+        set_bot_timezone("Europe/Moscow")
         status = ServiceStatus(
             balance=42.5,
             currency="RUB",
@@ -101,7 +103,8 @@ class TestFormatMessages:
         text = format_status_message("my-vps", status)
         assert "42.5" in text
         assert "RUB" in text
-        assert "2026-06-01" in text
+        assert "2026-06-01 03:00" in text
+        assert "MSK" in text
 
     @pytest.mark.parametrize(
         ("alert", "fragment"),
@@ -125,3 +128,9 @@ class TestFormatMessages:
     def test_format_alert_unknown_type_fallback(self) -> None:
         text = format_alert_message("svc", "custom", ServiceStatus())
         assert "custom" in text
+
+    def test_format_alert_subscription_uses_bot_timezone(self) -> None:
+        set_bot_timezone("Europe/Moscow")
+        status = ServiceStatus(subscription_end=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc))
+        text = format_alert_message("svc", "subscription_ending", status)
+        assert "2026-01-01 03:00" in text

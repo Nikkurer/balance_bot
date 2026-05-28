@@ -1,6 +1,7 @@
 """Семантическая валидация конфигурации после разбора YAML."""
 
 import re
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from balance_bot.models import AppConfig, ServiceConfig
 
@@ -58,6 +59,12 @@ def validate_config(config: AppConfig) -> None:
 
     if not config.plugins_dir or not str(config.plugins_dir).strip():
         errors.append("plugins_dir: обязателен")
+    try:
+        ZoneInfo(config.timezone)
+    except ZoneInfoNotFoundError:
+        errors.append(
+            "timezone: неизвестная IANA timezone (например, Europe/Moscow, UTC)"
+        )
 
     if not config.services:
         errors.append("services: нужен хотя бы один сервис для мониторинга")

@@ -57,9 +57,11 @@ class AppConfig:
         allowed_user_ids: Список Telegram user ID с доступом к боту.
         services: Сервисы для мониторинга.
         plugins_dir: Каталог с файлами плагинов (относительный или абсолютный).
+        timezone: IANA timezone для сообщений и логов (например, ``Europe/Moscow``).
     """
 
     bot_token: str
     allowed_user_ids: list[int]
     services: list[ServiceConfig]
     plugins_dir: str = "plugins"
+    timezone: str = "UTC"

@@ -21,19 +21,28 @@ from balance_bot.plugins.loader import (
 )
 from balance_bot.scheduler import Scheduler
 from balance_bot.state import StateStore
+from balance_bot.timezone import set_bot_timezone
 
 logger = logging.getLogger(__name__)
 
 
-async def run(config_path: Path, plugins_dir_override: Path | None = None) -> None:
+async def run(
+    config_path: Path,
+    plugins_dir_override: Path | None = None,
+    *,
+    verbose: bool = False,
+) -> None:
     """Запускает бота: плагины, опрос сервисов, Telegram polling.
 
     Args:
         config_path: Путь к YAML-конфигурации.
         plugins_dir_override: Каталог плагинов; если ``None``, берётся из конфига
             относительно каталога конфига.
+        verbose: Флаг подробного логирования.
     """
     config = load_config(config_path)
+    set_bot_timezone(config.timezone)
+    setup_logging(verbose=verbose, timezone_name=config.timezone)
     plugins_dir = plugins_dir_override or resolve_plugins_dir(
         Path(config.plugins_dir), config_path
     )
@@ -96,9 +105,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("-v", "--verbose", action="store_true", help="Подробные логи")
     args = parser.parse_args(argv)
 
-    setup_logging(verbose=args.verbose)
-
     config_path = Path(args.config)
+    setup_logging(verbose=args.verbose)
     if not config_path.exists():
         logger.error("Config file not found: %s", config_path)
         sys.exit(1)
@@ -106,7 +114,7 @@ def main(argv: list[str] | None = None) -> None:
     plugins_override = Path(args.plugins_dir) if args.plugins_dir else None
 
     try:
-        asyncio.run(run(config_path, plugins_override))
+        asyncio.run(run(config_path, plugins_override, verbose=args.verbose))
     except ConfigError as exc:
         logger.error("Некорректная конфигурация:\n%s", exc)
         sys.exit(1)
