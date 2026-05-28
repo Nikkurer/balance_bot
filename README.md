@@ -41,6 +41,7 @@ docker compose -f docker-compose.dev.yml logs -f balance-bot
 ```bash
 cp .env.example .env
 # В .env: BALANCE_BOT_IMAGE=ghcr.io/<owner>/<repo>:1.0.0
+# Для диагностики можно включить debug-логи: BALANCE_BOT_DEBUG=1
 docker compose pull
 docker compose up -d
 docker compose logs -f balance-bot
@@ -55,6 +56,14 @@ docker compose logs -f balance-bot
 ```bash
 uv sync
 uv run balance-bot -c config.yaml
+```
+
+Debug-режим:
+
+```bash
+uv run balance-bot -c config.yaml --debug
+# или
+BALANCE_BOT_DEBUG=1 uv run balance-bot -c config.yaml
 ```
 
 ### Тесты

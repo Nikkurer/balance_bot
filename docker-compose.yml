@@ -6,6 +6,8 @@ services:
     image: ${BALANCE_BOT_IMAGE:?Задайте BALANCE_BOT_IMAGE в файле .env — см. .env.example}
     container_name: balance-bot
     restart: unless-stopped
+    environment:
+      - BALANCE_BOT_DEBUG=${BALANCE_BOT_DEBUG:-0}
     command: ["balance-bot", "-c", "/config/config.yaml", "--plugins-dir", "/plugins"]
     volumes:
       - ./config.yaml:/config/config.yaml:ro

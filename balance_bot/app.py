@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -24,6 +25,21 @@ from balance_bot.state import StateStore
 from balance_bot.timezone import set_bot_timezone
 
 logger = logging.getLogger(__name__)
+
+
+def _is_debug_enabled(cli_verbose: bool, cli_debug: bool) -> bool:
+    """Определяет, нужно ли включать debug-логи.
+
+    Приоритет: CLI-флаги ``-v``/``--debug`` или переменная ``BALANCE_BOT_DEBUG``.
+    """
+    if cli_verbose or cli_debug:
+        return True
+    return os.getenv("BALANCE_BOT_DEBUG", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 async def run(
@@ -103,10 +119,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Каталог плагинов (переопределяет plugins_dir из конфига)",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Подробные логи")
+    parser.add_argument("--debug", action="store_true", help="Синоним verbose-режима")
     args = parser.parse_args(argv)
+    debug_enabled = _is_debug_enabled(args.verbose, args.debug)
 
     config_path = Path(args.config)
-    setup_logging(verbose=args.verbose)
+    setup_logging(verbose=debug_enabled)
     if not config_path.exists():
         logger.error("Config file not found: %s", config_path)
         sys.exit(1)
@@ -114,7 +132,7 @@ def main(argv: list[str] | None = None) -> None:
     plugins_override = Path(args.plugins_dir) if args.plugins_dir else None
 
     try:
-        asyncio.run(run(config_path, plugins_override, verbose=args.verbose))
+        asyncio.run(run(config_path, plugins_override, verbose=debug_enabled))
     except ConfigError as exc:
         logger.error("Некорректная конфигурация:\n%s", exc)
         sys.exit(1)
