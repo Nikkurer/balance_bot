@@ -68,6 +68,12 @@ class ServicePoller:
         """
         name = self.service.name
         plugin_name = self.service.plugin
+        logger.debug(
+            "poll_once(): service=%s plugin=%s interval=%ss",
+            name,
+            plugin_name,
+            self.service.poll_interval_seconds,
+        )
 
         try:
             status = await self.plugin.fetch_status()
@@ -105,10 +111,20 @@ class ServicePoller:
         new_alerts = evaluate_alerts(self.service, status)
         prev_alerts = self.state.get_active_alerts(name)
         risen = new_alerts - prev_alerts
+        fallen = prev_alerts - new_alerts
         self.state.set_active_alerts(name, new_alerts)
+        logger.debug(
+            "Алерты '%s': prev=%s new=%s risen=%s fallen=%s",
+            name,
+            sorted(prev_alerts),
+            sorted(new_alerts),
+            sorted(risen),
+            sorted(fallen),
+        )
 
         for alert in risen:
             message = format_alert_message(name, alert, status)
+            logger.debug("Отправка нового алерта '%s' для '%s'", alert, name)
             await self.on_notify(message)
 
         return status
@@ -117,21 +133,26 @@ class ServicePoller:
         """Бесконечный цикл: ``poll_once`` → sleep(interval)."""
         interval = self.service.poll_interval_seconds
         while True:
+            logger.debug("Цикл poller '%s': запуск poll_once()", self.service.name)
             await self.poll_once()
+            logger.debug("Цикл poller '%s': sleep %ss", self.service.name, interval)
             await asyncio.sleep(interval)
 
     def start(self) -> None:
         """Запускает фоновую задачу ``_loop``."""
         self._task = asyncio.create_task(self._loop(), name=f"poller-{self.service.name}")
+        logger.debug("Poller '%s' стартовал: task=%s", self.service.name, self._task.get_name())
 
     async def stop(self) -> None:
         """Отменяет фоновую задачу и закрывает плагин."""
         if self._task:
+            logger.debug("Остановка poller '%s': cancel task", self.service.name)
             self._task.cancel()
             try:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        logger.debug("Остановка poller '%s': close plugin", self.service.name)
         await self.plugin.close()
 
 
@@ -159,16 +180,24 @@ class Scheduler:
         self._pollers.append(
             ServicePoller(service, plugin, self.state, self.on_notify)
         )
+        logger.debug(
+            "Scheduler: добавлен poller service=%s plugin=%s",
+            service.name,
+            service.plugin,
+        )
 
     def start_all(self) -> None:
         """Запускает фоновые задачи всех poller'ов."""
+        logger.debug("Scheduler: start_all() count=%d", len(self._pollers))
         for poller in self._pollers:
             poller.start()
 
     async def stop_all(self) -> None:
         """Останавливает все poller'ы параллельно."""
+        logger.debug("Scheduler: stop_all() count=%d", len(self._pollers))
         await asyncio.gather(*(p.stop() for p in self._pollers))
 
     async def poll_all_now(self) -> None:
         """Параллельно выполняет ``poll_once`` для каждого сервиса."""
+        logger.debug("Scheduler: poll_all_now() count=%d", len(self._pollers))
         await asyncio.gather(*(p.poll_once() for p in self._pollers))

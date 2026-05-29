@@ -61,6 +61,13 @@ class Plugin(ServicePlugin):
         currency_override = cfg.get("currency")
         use_services = bool(cfg.get("use_services_forecast", True))
         now = datetime.now(timezone.utc)
+        logger.debug(
+            "Aeza fetch_status: service=%s base_url=%s auth=%s use_services=%s",
+            self.service.name,
+            base_url,
+            auth,
+            use_services,
+        )
 
         try:
             if auth == "bearer":
@@ -109,6 +116,14 @@ class Plugin(ServicePlugin):
         if subscription_end is not None:
             details["forecast_source"] = forecast_source
 
+        logger.debug(
+            "Aeza fetch_status ok: service=%s balance=%s currency=%s subscription_end=%s source=%s",
+            self.service.name,
+            balance,
+            currency,
+            subscription_end,
+            details.get("forecast_source"),
+        )
         return ServiceStatus(
             balance=balance,
             currency=currency,
@@ -190,21 +205,37 @@ class Plugin(ServicePlugin):
         if self._http is None or self._http.closed:
             self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
 
+        logger.debug(
+            "Aeza: GET %s auth=%s params=%s service=%s",
+            url,
+            auth,
+            params,
+            self.service.name,
+        )
         async with self._http.get(url, headers=headers, params=params) as resp:
+            logger.debug("Aeza: GET %s -> HTTP %s", url, resp.status)
             try:
                 payload = await resp.json(content_type=None)
             except Exception as exc:
                 text = await resp.text()
                 raise AezaApiError(
-                    f"ответ не JSON (HTTP {resp.status}): {text[:200]}"
+                    f"{url}: ответ не JSON (HTTP {resp.status}): {text[:200]}"
                 ) from exc
 
             if resp.status >= 400:
                 msg = _api_message(payload) or resp.reason
-                raise AezaApiError(f"HTTP {resp.status} — {msg}")
+                trace_id = _extract_trace_id(payload) or resp.headers.get("x-trace-id")
+                request_id = resp.headers.get("x-request-id")
+                suffix_parts = []
+                if trace_id:
+                    suffix_parts.append(f"traceId={trace_id}")
+                if request_id:
+                    suffix_parts.append(f"requestId={request_id}")
+                suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
+                raise AezaApiError(f"{url}: HTTP {resp.status} — {msg}{suffix}")
 
             if not isinstance(payload, dict):
-                raise AezaApiError("неожиданный формат ответа")
+                raise AezaApiError(f"{url}: неожиданный формат ответа")
 
             if payload.get("error"):
                 err = payload["error"]
@@ -212,7 +243,9 @@ class Plugin(ServicePlugin):
                     msg = err.get("message") or err.get("slug") or str(err)
                 else:
                     msg = str(err)
-                raise AezaApiError(msg)
+                trace_id = _extract_trace_id(payload)
+                suffix = f" (traceId={trace_id})" if trace_id else ""
+                raise AezaApiError(f"{url}: {msg}{suffix}")
 
             return payload
 
@@ -335,6 +368,30 @@ def _api_message(payload: dict | None) -> str | None:
     if isinstance(err, dict):
         return err.get("message") or err.get("slug")
     return payload.get("status_msg") or payload.get("message")
+
+
+def _extract_trace_id(payload: dict | None) -> str | None:
+    """Извлекает traceId/requestId из ошибки Aeza API.
+
+    Args:
+        payload: Тело ответа API.
+
+    Returns:
+        Значение trace id или ``None``.
+    """
+    if not isinstance(payload, dict):
+        return None
+    for key in ("traceId", "trace_id", "requestId", "request_id"):
+        value = payload.get(key)
+        if value:
+            return str(value)
+    err = payload.get("error")
+    if isinstance(err, dict):
+        for key in ("traceId", "trace_id", "requestId", "request_id"):
+            value = err.get(key)
+            if value:
+                return str(value)
+    return None
 
 
 def _parse_balance(data: dict) -> tuple[float | None, str | None]:

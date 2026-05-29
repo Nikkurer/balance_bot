@@ -1,9 +1,12 @@
 """Тестовый плагин: данные из ``plugin_config`` без HTTP-запросов."""
 
+import logging
 from datetime import datetime, timezone
 
 from balance_bot.models import ServiceStatus
 from balance_bot.plugins.base import ServicePlugin
+
+logger = logging.getLogger(__name__)
 
 PLUGIN_NAME = "mock"
 
@@ -19,16 +22,28 @@ class Plugin(ServicePlugin):
             ``last_updated`` в UTC.
         """
         cfg = self.service.plugin_config
+        logger.debug(
+            "Mock fetch_status: service=%s balance=%s currency=%s",
+            self.service.name,
+            cfg.get("balance"),
+            cfg.get("currency", "RUB"),
+        )
         subscription_end = None
         if raw_end := cfg.get("subscription_end"):
             subscription_end = datetime.fromisoformat(raw_end)
             if subscription_end.tzinfo is None:
                 subscription_end = subscription_end.replace(tzinfo=timezone.utc)
 
-        return ServiceStatus(
+        status = ServiceStatus(
             balance=cfg.get("balance"),
             currency=cfg.get("currency", "RUB"),
             subscription_end=subscription_end,
             last_updated=datetime.now(timezone.utc),
             details={"source": "mock"},
         )
+        logger.debug(
+            "Mock fetch_status ok: service=%s subscription_end=%s",
+            self.service.name,
+            subscription_end,
+        )
+        return status

@@ -87,6 +87,14 @@ class Plugin(ServicePlugin):
             )
 
         now = datetime.now(timezone.utc)
+        logger.debug(
+            "Cloud fetch_status: service=%s base_url=%s agreement_id=%s auth=%s balance_field=%s",
+            self.service.name,
+            base_url,
+            agreement_id,
+            _resolve_auth_mode(cfg),
+            balance_field,
+        )
 
         try:
             token = await self._resolve_token(cfg)
@@ -96,7 +104,12 @@ class Plugin(ServicePlugin):
         except CloudApiError as exc:
             return ServiceStatus(error=str(exc), last_updated=now)
         except aiohttp.ClientError as exc:
-            logger.exception("Cloud.ru HTTP error for %s", self.service.name)
+            logger.debug(
+                "Cloud.ru HTTP error for %s: %s",
+                self.service.name,
+                exc,
+                exc_info=True,
+            )
             return ServiceStatus(error=f"сеть/API: {exc}", last_updated=now)
 
         balance = _pick_balance(balance_payload, balance_field)
@@ -115,9 +128,19 @@ class Plugin(ServicePlugin):
         if subscription_end is not None:
             details["forecast_source"] = "api"
 
+        resolved_currency = (
+            str(currency_override) if currency_override else _find_currency(balance_payload)
+        )
+        logger.debug(
+            "Cloud fetch_status ok: service=%s balance=%s currency=%s subscription_end=%s",
+            self.service.name,
+            balance,
+            resolved_currency,
+            subscription_end,
+        )
         return ServiceStatus(
             balance=balance,
-            currency=str(currency_override) if currency_override else _find_currency(balance_payload),
+            currency=resolved_currency,
             subscription_end=subscription_end,
             last_updated=now,
             details=details,
@@ -142,6 +165,7 @@ class Plugin(ServicePlugin):
             CloudApiError: Нет учётных данных или пустой ответ IAM.
         """
         auth = _resolve_auth_mode(cfg)
+        logger.debug("Cloud _resolve_token: service=%s auth=%s", self.service.name, auth)
         if auth == "bearer":
             token = cfg.get("access_token") or cfg.get("api_token")
             if not token or not str(token).strip():
@@ -159,6 +183,7 @@ class Plugin(ServicePlugin):
             return str(token).strip()
 
         if self._cached_token and time.monotonic() < self._token_expires_at:
+            logger.debug("Cloud _resolve_token: используем кэш IAM-токена")
             return self._cached_token
 
         key_id = cfg.get("key_id")
@@ -169,6 +194,7 @@ class Plugin(ServicePlugin):
             )
 
         iam_url = str(cfg.get("iam_url", IAM_TOKEN_URL)).strip()
+        logger.debug("Cloud _resolve_token: запрос IAM %s", iam_url)
         payload = await self._request_json(
             "POST",
             iam_url,
@@ -212,6 +238,12 @@ class Plugin(ServicePlugin):
             CloudApiError: Ни один candidate path не подошёл.
         """
         auth = _resolve_auth_mode(cfg)
+        logger.debug(
+            "Cloud _fetch_balance_payload: service=%s agreement_id=%s auth=%s",
+            self.service.name,
+            agreement_id,
+            auth,
+        )
         if custom := cfg.get("balance_path"):
             path = str(custom).format(
                 agreement_id=agreement_id,
@@ -238,6 +270,7 @@ class Plugin(ServicePlugin):
             try:
                 payload = await self._get_json(base_url, path, token, cfg, auth)
                 if _looks_like_balance_payload(payload):
+                    logger.debug("Cloud: баланс получен через %s", path)
                     return payload
             except CloudApiError as exc:
                 last_error = str(exc)
@@ -306,21 +339,37 @@ class Plugin(ServicePlugin):
         if self._http is None or self._http.closed:
             self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
 
+        logger.debug(
+            "Cloud: %s %s service=%s has_body=%s",
+            method,
+            url,
+            self.service.name,
+            json_body is not None,
+        )
         async with self._http.request(method, url, headers=headers, json=json_body) as resp:
+            logger.debug("Cloud: %s %s -> HTTP %s", method, url, resp.status)
             try:
                 payload = await resp.json(content_type=None)
             except Exception as exc:
                 text = await resp.text()
                 raise CloudApiError(
-                    f"ответ не JSON (HTTP {resp.status}): {text[:200]}"
+                    f"{url}: ответ не JSON (HTTP {resp.status}): {text[:200]}"
                 ) from exc
 
             if resp.status >= 400:
                 msg = _api_message(payload) or resp.reason or str(resp.status)
-                raise CloudApiError(f"HTTP {resp.status} — {msg}")
+                trace_id = _extract_trace_id(payload) or resp.headers.get("x-trace-id")
+                request_id = resp.headers.get("x-request-id")
+                suffix_parts = []
+                if trace_id:
+                    suffix_parts.append(f"traceId={trace_id}")
+                if request_id:
+                    suffix_parts.append(f"requestId={request_id}")
+                suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
+                raise CloudApiError(f"{url}: HTTP {resp.status} — {msg}{suffix}")
 
             if not isinstance(payload, dict):
-                raise CloudApiError("неожиданный формат ответа")
+                raise CloudApiError(f"{url}: неожиданный формат ответа")
 
             return payload
 
@@ -363,6 +412,23 @@ def _auth_header(token: str, auth: str) -> dict[str, str]:
     if auth == "api_key":
         return {"Authorization": f"Api-Key {token}"}
     return {"Authorization": f"Bearer {token}"}
+
+
+def _extract_trace_id(payload: dict | None) -> str | None:
+    """Извлекает traceId/requestId из ответа Cloud.ru API."""
+    if not isinstance(payload, dict):
+        return None
+    for key in ("traceId", "trace_id", "requestId", "request_id", "correlationId"):
+        value = payload.get(key)
+        if value:
+            return str(value)
+    err = payload.get("error")
+    if isinstance(err, dict):
+        for key in ("traceId", "trace_id", "requestId", "request_id", "correlationId"):
+            value = err.get(key)
+            if value:
+                return str(value)
+    return None
 
 
 def _api_message(payload: dict | None) -> str | None:

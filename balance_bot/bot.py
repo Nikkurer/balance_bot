@@ -47,9 +47,20 @@ async def register_bot_commands(bot: Bot, *, chat_id: int | None = None) -> None
     ]
     if chat_id is not None:
         scopes.insert(0, BotCommandScopeChat(chat_id=chat_id))
+    logger.debug(
+        "register_bot_commands(): chat_id=%s scopes=%d commands=%s",
+        chat_id,
+        len(scopes),
+        [c.command for c in BOT_COMMANDS],
+    )
 
     for scope in scopes:
         for language_code in (None, "ru"):
+            logger.debug(
+                "set_my_commands(): scope=%s language=%s",
+                scope.__class__.__name__,
+                language_code or "default",
+            )
             await bot.set_my_commands(
                 BOT_COMMANDS,
                 scope=scope,
@@ -57,6 +68,7 @@ async def register_bot_commands(bot: Bot, *, chat_id: int | None = None) -> None
             )
 
     await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    logger.debug("set_chat_menu_button(): MenuButtonCommands")
 
 
 class AuthMiddleware(BaseMiddleware):
@@ -89,8 +101,10 @@ class AuthMiddleware(BaseMiddleware):
         if isinstance(event, Message):
             user_id = event.from_user.id if event.from_user else None
             if user_id not in self.allowed_user_ids:
+                logger.debug("AuthMiddleware: deny user_id=%s", user_id)
                 await event.answer("Доступ запрещён.")
                 return None
+            logger.debug("AuthMiddleware: allow user_id=%s", user_id)
         return await handler(event, data)
 
 
@@ -115,6 +129,7 @@ def create_dispatcher(
 
     @dp.message(Command("start"))
     async def cmd_start(message: Message) -> None:
+        logger.debug("Команда /start: chat_id=%s user_id=%s", message.chat.id, message.from_user.id if message.from_user else None)
         try:
             await register_bot_commands(message.bot, chat_id=message.chat.id)
         except Exception as exc:
@@ -129,16 +144,19 @@ def create_dispatcher(
 
     @dp.message(Command("status"))
     async def cmd_status(message: Message) -> None:
+        logger.debug("Команда /status: chat_id=%s", message.chat.id)
         statuses = state.all_statuses()
         if not statuses:
             await message.answer("Данных пока нет. Дождитесь первого опроса или /refresh.")
             return
 
         parts = [format_status_message(name, st) for name, st in sorted(statuses.items())]
+        logger.debug("Команда /status: services=%d", len(parts))
         await message.answer("\n\n".join(parts), parse_mode=ParseMode.HTML)
 
     @dp.message(Command("refresh"))
     async def cmd_refresh(message: Message) -> None:
+        logger.debug("Команда /refresh: chat_id=%s", message.chat.id)
         if on_refresh is None:
             await message.answer("Опрос недоступен.")
             return
@@ -148,6 +166,7 @@ def create_dispatcher(
 
     @dp.message(F.text)
     async def unknown(message: Message) -> None:
+        logger.debug("Неизвестная команда/текст: chat_id=%s text=%r", message.chat.id, message.text)
         await message.answer("Неизвестная команда. Используйте /status или /refresh.")
 
     return dp
@@ -164,6 +183,7 @@ async def notify_users(bot: Bot, user_ids: list[int], text: str) -> None:
         text: Текст уведомления (HTML).
     """
     for uid in user_ids:
+        logger.debug("notify_users(): send uid=%s", uid)
         try:
             await bot.send_message(uid, text, parse_mode=ParseMode.HTML)
         except Exception as exc:

@@ -25,8 +25,16 @@ def resolve_plugins_dir(plugins_dir: Path, config_path: Path) -> Path:
         Абсолютный путь к каталогу плагинов.
     """
     if plugins_dir.is_absolute():
+        logger.debug("resolve_plugins_dir(): absolute=%s", plugins_dir)
         return plugins_dir
-    return (config_path.parent / plugins_dir).resolve()
+    resolved = (config_path.parent / plugins_dir).resolve()
+    logger.debug(
+        "resolve_plugins_dir(): relative=%s config=%s -> %s",
+        plugins_dir,
+        config_path,
+        resolved,
+    )
+    return resolved
 
 
 def discover_plugins(plugins_dir: Path) -> dict[str, type[ServicePlugin]]:
@@ -46,6 +54,7 @@ def discover_plugins(plugins_dir: Path) -> dict[str, type[ServicePlugin]]:
         ValueError: Дубликат ``PLUGIN_NAME`` у двух модулей.
     """
     plugins_dir = plugins_dir.resolve()
+    logger.debug("discover_plugins(): scan dir=%s", plugins_dir)
     if not plugins_dir.is_dir():
         raise FileNotFoundError(f"Plugins directory not found: {plugins_dir}")
 
@@ -56,6 +65,7 @@ def discover_plugins(plugins_dir: Path) -> dict[str, type[ServicePlugin]]:
     registry: dict[str, type[ServicePlugin]] = {}
 
     for entry in sorted(plugins_dir.iterdir()):
+        logger.debug("discover_plugins(): inspect entry=%s", entry.name)
         if entry.name.startswith(("_", ".")):
             continue
 
@@ -68,6 +78,7 @@ def discover_plugins(plugins_dir: Path) -> dict[str, type[ServicePlugin]]:
             continue
 
         try:
+            logger.debug("discover_plugins(): import module=%s", module_name)
             module = importlib.import_module(module_name)
         except Exception:
             logger.exception("Failed to import plugin module %s", module_name)
@@ -99,6 +110,7 @@ def init_plugins(plugins_dir: Path) -> None:
     """
     global _REGISTRY
     _REGISTRY = discover_plugins(plugins_dir)
+    logger.debug("init_plugins(): registry=%s", sorted(_REGISTRY))
 
 
 def registered_plugins() -> list[str]:
@@ -168,6 +180,12 @@ def create_plugin(service: ServiceConfig) -> ServicePlugin:
             f"сервис '{service.name}': плагин '{service.plugin}' не найден. "
             f"Доступные: {available}"
         )
+    logger.debug(
+        "create_plugin(): service=%s plugin=%s class=%s",
+        service.name,
+        service.plugin,
+        plugin_cls.__name__,
+    )
     return plugin_cls(service)
 
 

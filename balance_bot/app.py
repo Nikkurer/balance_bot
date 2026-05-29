@@ -59,13 +59,33 @@ async def run(
     config = load_config(config_path)
     set_bot_timezone(config.timezone)
     setup_logging(verbose=verbose, timezone_name=config.timezone)
+    logger.debug(
+        "Старт run(): config=%s, plugins_override=%s, timezone=%s, debug=%s",
+        config_path,
+        plugins_dir_override,
+        config.timezone,
+        verbose,
+    )
     plugins_dir = plugins_dir_override or resolve_plugins_dir(
         Path(config.plugins_dir), config_path
     )
+    logger.debug("Разрешён каталог плагинов: %s", plugins_dir)
     init_plugins(plugins_dir)
     loaded = registered_plugins()
     logger.info("Каталог плагинов: %s (загружено: %s)", plugins_dir, ", ".join(loaded) or "—")
+    logger.debug("Загруженные плагины: %s", loaded)
     ensure_plugins_for_services(config.services)
+    logger.debug(
+        "Конфиг сервисов: %s",
+        [
+            {
+                "name": s.name,
+                "plugin": s.plugin,
+                "interval": s.poll_interval_seconds,
+            }
+            for s in config.services
+        ],
+    )
 
     state = StateStore()
     # Увеличенный таймаут снижает ложные обрывы long polling в Docker/WSL
@@ -75,25 +95,40 @@ async def run(
     )
 
     async def on_notify(text: str) -> None:
+        logger.debug(
+            "on_notify(): отправка уведомления %d пользователям",
+            len(config.allowed_user_ids),
+        )
         await notify_users(bot, config.allowed_user_ids, text)
 
     scheduler = Scheduler(state, on_notify)
     for service in config.services:
         plugin = create_plugin(service)
         scheduler.add_poller(service, plugin)
+        logger.debug(
+            "Создан poller: service=%s plugin=%s class=%s",
+            service.name,
+            service.plugin,
+            plugin.__class__.__name__,
+        )
     logger.info("Запущен мониторинг %d сервис(ов)", len(config.services))
 
     dp = create_dispatcher(config, state, on_refresh=scheduler.poll_all_now)
 
     await register_bot_commands(bot)
     logger.info("Команды бота зарегистрированы в Telegram")
+    logger.debug("Команды бота зарегистрированы для текущего scope/языков")
 
     scheduler.start_all()
+    logger.debug("Фоновые poller'ы запущены")
     await scheduler.poll_all_now()
+    logger.debug("Первичный poll_all_now() завершён")
 
     try:
+        logger.debug("Запуск Telegram long polling")
         await dp.start_polling(bot)
     finally:
+        logger.debug("Остановка планировщика и закрытие bot session")
         await scheduler.stop_all()
         await bot.session.close()
 
@@ -122,6 +157,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--debug", action="store_true", help="Синоним verbose-режима")
     args = parser.parse_args(argv)
     debug_enabled = _is_debug_enabled(args.verbose, args.debug)
+    logger.debug(
+        "CLI args parsed: config=%s plugins_dir=%s verbose=%s debug=%s -> enabled=%s",
+        args.config,
+        args.plugins_dir,
+        args.verbose,
+        args.debug,
+        debug_enabled,
+    )
 
     config_path = Path(args.config)
     setup_logging(verbose=debug_enabled)

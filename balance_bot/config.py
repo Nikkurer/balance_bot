@@ -1,11 +1,14 @@
 """Загрузка и разбор YAML-конфигурации приложения."""
 
+import logging
 from pathlib import Path
 
 import yaml
 
 from balance_bot.models import AppConfig, ServiceConfig
 from balance_bot.validation import ConfigError, validate_config
+
+logger = logging.getLogger(__name__)
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -21,6 +24,7 @@ def load_config(path: str | Path) -> AppConfig:
         ConfigError: Ошибка чтения файла, разбора YAML или валидации полей.
     """
     path = Path(path)
+    logger.debug("load_config(): path=%s", path)
     try:
         with path.open(encoding="utf-8") as f:
             raw = yaml.safe_load(f)
@@ -76,6 +80,13 @@ def load_config(path: str | Path) -> AppConfig:
                     plugin_config=s.get("plugin_config") or {},
                 )
             )
+            logger.debug(
+                "load_config(): service[%d] name=%s plugin=%s interval=%s",
+                i,
+                s.get("name"),
+                s.get("plugin"),
+                s.get("poll_interval_seconds"),
+            )
         except KeyError as exc:
             raise ConfigError(
                 f"services[{i}]: отсутствует обязательное поле {exc.args[0]!r}"
@@ -98,4 +109,11 @@ def load_config(path: str | Path) -> AppConfig:
         timezone=timezone_name,
     )
     validate_config(config)
+    logger.debug(
+        "load_config(): done telegram_users=%d services=%d timezone=%s plugins_dir=%s",
+        len(config.allowed_user_ids),
+        len(config.services),
+        config.timezone,
+        config.plugins_dir,
+    )
     return config

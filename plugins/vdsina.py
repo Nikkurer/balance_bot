@@ -54,6 +54,12 @@ class Plugin(ServicePlugin):
 
         currency = cfg.get("currency")
         now = datetime.now(timezone.utc)
+        logger.debug(
+            "VDSina fetch_status: service=%s base_url=%s balance_field=%s",
+            self.service.name,
+            base_url,
+            balance_field,
+        )
 
         try:
             balance_payload = await self._get(base_url, token, "account.balance")
@@ -61,7 +67,7 @@ class Plugin(ServicePlugin):
         except VdsinaApiError as exc:
             return ServiceStatus(error=str(exc), last_updated=now)
         except aiohttp.ClientError as exc:
-            logger.exception("VDSina HTTP error for %s", self.service.name)
+            logger.debug("VDSina HTTP error for %s: %s", self.service.name, exc, exc_info=True)
             return ServiceStatus(error=f"сеть/API: {exc}", last_updated=now)
 
         balance_data = _unwrap(balance_payload, "account.balance")
@@ -81,6 +87,13 @@ class Plugin(ServicePlugin):
             "account_name": account.get("name"),
         }
 
+        logger.debug(
+            "VDSina fetch_status ok: service=%s balance=%s currency=%s subscription_end=%s",
+            self.service.name,
+            balance,
+            currency,
+            subscription_end,
+        )
         return ServiceStatus(
             balance=balance,
             currency=str(currency) if currency else None,
@@ -117,25 +130,33 @@ class Plugin(ServicePlugin):
         if self._http is None or self._http.closed:
             self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
 
+        logger.debug(
+            "VDSina: GET %s service=%s",
+            url,
+            self.service.name,
+        )
         async with self._http.get(url, headers=headers) as resp:
+            logger.debug("VDSina: GET %s -> HTTP %s", url, resp.status)
             try:
                 payload = await resp.json(content_type=None)
             except Exception as exc:
                 text = await resp.text()
                 raise VdsinaApiError(
-                    f"{path}: ответ не JSON (HTTP {resp.status}): {text[:200]}"
+                    f"{url}: ответ не JSON (HTTP {resp.status}): {text[:200]}"
                 ) from exc
 
             if resp.status >= 400:
                 msg = _api_message(payload) or resp.reason
-                raise VdsinaApiError(f"{path}: HTTP {resp.status} — {msg}")
+                request_id = resp.headers.get("x-request-id")
+                suffix = f" (requestId={request_id})" if request_id else ""
+                raise VdsinaApiError(f"{url}: HTTP {resp.status} — {msg}{suffix}")
 
             if not isinstance(payload, dict):
-                raise VdsinaApiError(f"{path}: неожиданный формат ответа")
+                raise VdsinaApiError(f"{url}: неожиданный формат ответа")
 
             status = payload.get("status")
             if status and status != "ok":
-                raise VdsinaApiError(f"{path}: {_api_message(payload) or status}")
+                raise VdsinaApiError(f"{url}: {_api_message(payload) or status}")
 
             return payload
 
