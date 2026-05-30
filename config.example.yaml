@@ -9,7 +9,7 @@ plugins_dir: plugins
 timezone: UTC
 
 services:
-  # Документация: plugins/vdsina.md, plugins/aeza.md, plugins/cloud.md, plugins/mock.md
+  # Документация: docs/plugins/vdsina.md, docs/plugins/aeza.md, docs/plugins/cloud.md, docs/plugins/mock.md
   # --- VDSina: один плагин, два аккаунта (ru / com) — разные api_token ---
   - name: "vdsina-ru"
     plugin: vdsina

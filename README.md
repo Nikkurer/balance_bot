@@ -107,9 +107,9 @@ services:
 
 Плагины лежат в каталоге `plugins/` (настраивается через `plugins_dir`). Добавление — копирование файла в эту папку и указание `plugin: <имя>` в конфиге. Код бота менять не нужно.
 
-- Общее и контракт: [plugins/README.md](plugins/README.md)
-- Документация по сервисам: [mock](plugins/mock.md), [vdsina](plugins/vdsina.md), [aeza](plugins/aeza.md), [cloud](plugins/cloud.md)
-- Шаблон для нового плагина: [PLUGIN_TEMPLATE.md](plugins/PLUGIN_TEMPLATE.md)
+- Общее и контракт: [docs/plugins/README.md](docs/plugins/README.md)
+- Документация по сервисам: [mock](docs/plugins/mock.md), [vdsina](docs/plugins/vdsina.md), [aeza](docs/plugins/aeza.md), [cloud](docs/plugins/cloud.md)
+- Шаблон для нового плагина: [PLUGIN_TEMPLATE.md](docs/plugins/PLUGIN_TEMPLATE.md)
 
 ## CI/CD (GitHub)
 
