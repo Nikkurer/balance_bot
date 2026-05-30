@@ -67,7 +67,7 @@
 
 | Поле бота | Источник |
 |-----------|----------|
-| `balance` | `GET /desktop` (Bearer для `.net`, X-API-Key для `.ru`) |
+| `balance` | `GET /desktop`: поле ``balance.value`` в копейках/центах (÷100) |
 | `subscription_end` | ответ `/desktop` или минимальная дата среди услуг в `/services` |
 | `currency` | API или `plugin_config` |
 

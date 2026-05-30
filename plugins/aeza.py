@@ -389,6 +389,9 @@ def _extract_trace_id(payload: dict | None) -> str | None:
 def _parse_balance(data: dict) -> tuple[float | None, str | None]:
     """Парсит баланс и валюту из объекта аккаунта/desktop.
 
+    Aeza хранит суммы в минимальных единицах (копейки для RUB); ``value``
+    делится на ``10 ** round`` (по умолчанию ``round=2`` → деление на 100).
+
     Args:
         data: Словарь из API.
 
@@ -401,10 +404,32 @@ def _parse_balance(data: dict) -> tuple[float | None, str | None]:
         if value is None:
             value = balance_obj.get("amount")
         currency = balance_obj.get("currency") or balance_obj.get("code")
-        return _to_float(value), str(currency) if currency else None
+        return _normalize_balance_value(value, balance_obj), (
+            str(currency) if currency else None
+        )
     if balance_obj is not None:
-        return _to_float(balance_obj), None
-    return _to_float(data.get("balance")), None
+        return _normalize_balance_value(balance_obj), None
+    return _normalize_balance_value(data.get("balance")), None
+
+
+def _balance_divisor(balance_obj: dict | None) -> float:
+    """Возвращает делитель для перевода ``value`` в основные единицы валюты."""
+    if isinstance(balance_obj, dict):
+        raw_round = balance_obj.get("round")
+        if raw_round is not None:
+            try:
+                return float(10 ** int(raw_round))
+            except (TypeError, ValueError):
+                pass
+    return 100.0
+
+
+def _normalize_balance_value(value, balance_obj: dict | None = None) -> float | None:
+    """Переводит сумму из копеек/центов в основные единицы валюты."""
+    parsed = _to_float(value)
+    if parsed is None:
+        return None
+    return parsed / _balance_divisor(balance_obj)
 
 
 def _to_float(value) -> float | None:

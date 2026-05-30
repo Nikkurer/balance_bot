@@ -121,7 +121,7 @@ async def test_aeza_fetch_status_success(aeza_plugin: AezaPlugin) -> None:
             200,
             json_body={
                 "data": {
-                    "balance": {"value": 99.5, "currency": "EUR"},
+                    "balance": {"value": 9950, "currency": "EUR"},
                     "paidUntil": "2026-06-15T00:00:00+00:00",
                 }
             },
@@ -149,7 +149,7 @@ async def test_aeza_ru_fetch_status_success_via_desktop(aeza_ru_plugin: AezaPlug
             200,
             json_body={
                 "data": {
-                    "balance": {"value": 42.0, "currency": "RUB"},
+                    "balance": {"value": 4200, "currency": "RUB"},
                     "paidUntil": "2026-07-01T00:00:00+00:00",
                 }
             },
