@@ -34,7 +34,7 @@ class AezaApiError(Exception):
 
 
 class Plugin(ServicePlugin):
-    """Опрашивает desktop/accounts API Aeza (.net bearer, .ru api_key)."""
+    """Опрашивает ``GET /desktop`` Aeza (.net Bearer, .ru X-API-Key)."""
 
     def __init__(self, service) -> None:
         """Создаёт плагин с ленивой HTTP-сессией.
@@ -70,19 +70,11 @@ class Plugin(ServicePlugin):
         )
 
         try:
-            if auth == "bearer":
-                payload = await self._get(f"{base_url}/desktop", token, auth)
-                data = _unwrap_data(payload, "desktop")
-                forecast_source = "desktop"
-            else:
-                payload = await self._get(
-                    f"{base_url}/accounts",
-                    token,
-                    auth,
-                    params={"current": "1", "extra": "1"},
-                )
-                data = _unwrap_account(payload)
-                forecast_source = "accounts"
+            # /accounts?current=1 на my.aeza.ru периодически отдаёт HTTP 500;
+            # /desktop принимает и Bearer, и X-API-Key (проверено curl).
+            payload = await self._get(f"{base_url}/desktop", token, auth)
+            data = _unwrap_data(payload, "desktop")
+            forecast_source = "desktop"
         except AezaApiError as exc:
             return ServiceStatus(error=str(exc), last_updated=now)
         except aiohttp.ClientError as exc:

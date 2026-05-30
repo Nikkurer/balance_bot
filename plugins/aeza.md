@@ -24,7 +24,7 @@
 | `site` | URL по умолчанию | Авторизация | Эндпоинт баланса |
 |--------|------------------|-------------|-----------------|
 | `net` (по умолчанию) | `https://core.aeza.net/api` | `Bearer` | `GET /desktop` |
-| `ru` | `https://my.aeza.ru/api` | `X-API-Key` | `GET /accounts?current=1` |
+| `ru` | `https://my.aeza.ru/api` | `X-API-Key` | `GET /desktop` |
 
 Переопределение: `base_url` и/или `auth: bearer | api_key` в `plugin_config`.
 
@@ -67,11 +67,12 @@
 
 | Поле бота | Источник |
 |-----------|----------|
-| `balance` | desktop (`Bearer`) или accounts (`X-API-Key`) |
-| `subscription_end` | ответ API или минимальная дата среди услуг в `/services` |
+| `balance` | `GET /desktop` (Bearer для `.net`, X-API-Key для `.ru`) |
+| `subscription_end` | ответ `/desktop` или минимальная дата среди услуг в `/services` |
 | `currency` | API или `plugin_config` |
 
 ## Частые проблемы
 
-- **401 / ошибка авторизации** — для `site: net` часто нужен Bearer (desktop), для `ru` — API-ключ; при необходимости задайте `auth` явно.
+- **401 / ошибка авторизации** — для `site: net` нужен Bearer, для `ru` — API-ключ (`X-API-Key`); при необходимости задайте `auth` явно.
+- **HTTP 500 на `/accounts`** — на `my.aeza.ru` эндпоинт может быть недоступен; плагин использует `/desktop` с тем же API-ключом.
 - **Пустая дата подписки** — отключите `use_services_forecast: false` или проверьте, есть ли forecast в ответе API.

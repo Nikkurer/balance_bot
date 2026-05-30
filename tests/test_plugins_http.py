@@ -12,6 +12,7 @@ from plugins.vdsina import VdsinaApiError, Plugin as VdsinaPlugin
 from tests.http_mock import HttpRoute, patch_aiohttp_session
 
 AEZA_NET_DESKTOP = "https://core.aeza.net/api/desktop"
+AEZA_RU_DESKTOP = "https://my.aeza.ru/api/desktop"
 AEZA_RU_ACCOUNTS = "https://my.aeza.ru/api/accounts"
 VDSINA_RU_BALANCE = "https://userapi.vdsina.ru/v1/account.balance"
 VDSINA_RU_ACCOUNT = "https://userapi.vdsina.ru/v1/account"
@@ -140,11 +141,36 @@ async def test_aeza_fetch_status_success(aeza_plugin: AezaPlugin) -> None:
 
 
 @pytest.mark.asyncio
+async def test_aeza_ru_fetch_status_success_via_desktop(aeza_ru_plugin: AezaPlugin) -> None:
+    routes = [
+        HttpRoute(
+            "GET",
+            AEZA_RU_DESKTOP,
+            200,
+            json_body={
+                "data": {
+                    "balance": {"value": 42.0, "currency": "RUB"},
+                    "paidUntil": "2026-07-01T00:00:00+00:00",
+                }
+            },
+        )
+    ]
+    with patch_aiohttp_session("plugins.aeza", routes):
+        status = await aeza_ru_plugin.fetch_status()
+
+    assert status.error is None
+    assert status.balance == 42.0
+    assert status.currency == "RUB"
+    assert status.details["auth"] == "api_key"
+    assert status.details.get("forecast_source") == "desktop"
+
+
+@pytest.mark.asyncio
 async def test_aeza_fetch_status_maps_http_500_to_error(aeza_ru_plugin: AezaPlugin) -> None:
     routes = [
         HttpRoute(
             "GET",
-            AEZA_RU_ACCOUNTS,
+            AEZA_RU_DESKTOP,
             500,
             json_body={
                 "error": {
