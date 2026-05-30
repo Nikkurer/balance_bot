@@ -64,11 +64,8 @@ services:
       key_id: "YOUR_CLOUD_KEY_ID"
       key_secret: "YOUR_CLOUD_KEY_SECRET"
       agreement_id: "YOUR_AGREEMENT_UUID"
-      # customer_id: "YOUR_CUSTOMER_UUID"
       currency: RUB
-      balance_field: balance
       # auth: key              # key | bearer | api_key
-      # balance_path: "v1/agreements/{agreement_id}/balance"
 
   # --- тестовый плагин без API ---
   - name: "demo-service"

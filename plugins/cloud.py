@@ -1,8 +1,9 @@
-"""Плагин Cloud.ru Evolution: баланс договора через organization API и IAM."""
+"""Плагин Cloud.ru Evolution: баланс и гранты договора через BFF console API."""
 
 import logging
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
+from urllib.parse import urlencode
 
 import aiohttp
 
@@ -14,40 +15,17 @@ logger = logging.getLogger(__name__)
 PLUGIN_NAME = "cloud"
 
 IAM_TOKEN_URL = "https://iam.api.cloud.ru/api/v1/auth/token"
-BASE_URL_ORG = "https://organization.api.cloud.ru"
+BASE_URL_BFF = "https://console.cloud.ru/u-api/bff-console"
 
-_BALANCE_FIELDS = frozenset({"balance", "money", "real", "bonus", "total"})
-_FORECAST_KEYS = (
-    "subscription_end",
-    "subscriptionEnd",
-    "balance_run_out_date",
-    "balanceRunOutDate",
-    "run_out_date",
-    "runOutDate",
-    "deactivation_date",
-    "deactivationDate",
-    "shutdown_at",
-    "shutdownAt",
-    "expires_at",
-    "expiresAt",
-    "forecast",
-    "paid_until",
-    "paidUntil",
-)
-_DAYS_LEFT_KEYS = (
-    "days_left",
-    "daysLeft",
-    "days_enough",
-    "daysEnough",
-    "enough_days",
-    "enoughDays",
-    "balance_days_left",
-    "balanceDaysLeft",
+GRANT_STATUS_READY = "BONUS_GRANT_STATUS_READY"
+GRANT_QUERY_STATUSES = (
+    GRANT_STATUS_READY,
+    "BONUS_GRANT_STATUS_NOT_STARTED",
 )
 
 
 class CloudApiError(Exception):
-    """Ошибка IAM, organization API или разбора ответа Cloud.ru."""
+    """Ошибка IAM, BFF API или разбора ответа Cloud.ru."""
 
 
 class Plugin(ServicePlugin):
@@ -67,6 +45,10 @@ class Plugin(ServicePlugin):
     async def fetch_status(self) -> ServiceStatus:
         """Получает баланс и дату окончания средств по договору.
 
+        При наличии активного гранта (``BONUS_GRANT_STATUS_READY``) возвращает
+        сумму ``current_amount`` и ближайший ``expire_at``. Иначе — поле
+        ``balance`` из BFF; дата окончания неизвестна (в боте «--»).
+
         Returns:
             ``ServiceStatus`` с полями баланса/подписки или ``error``.
         """
@@ -75,32 +57,21 @@ class Plugin(ServicePlugin):
         if not agreement_id:
             return ServiceStatus(error="plugin_config.agreement_id обязателен")
 
-        base_url = str(cfg.get("base_url", BASE_URL_ORG)).rstrip("/")
+        base_url = str(cfg.get("base_url", BASE_URL_BFF)).rstrip("/")
         currency_override = cfg.get("currency")
-        balance_field = str(cfg.get("balance_field", "balance")).lower()
-        if balance_field not in _BALANCE_FIELDS:
-            return ServiceStatus(
-                error=(
-                    "balance_field должен быть одним из: "
-                    f"{', '.join(sorted(_BALANCE_FIELDS))}"
-                )
-            )
 
         now = datetime.now(timezone.utc)
         logger.debug(
-            "Cloud fetch_status: service=%s base_url=%s agreement_id=%s auth=%s balance_field=%s",
+            "Cloud fetch_status: service=%s base_url=%s agreement_id=%s auth=%s",
             self.service.name,
             base_url,
             agreement_id,
             _resolve_auth_mode(cfg),
-            balance_field,
         )
 
         try:
             token = await self._resolve_token(cfg)
-            balance_payload = await self._fetch_balance_payload(
-                base_url, token, cfg, agreement_id
-            )
+            grants_payload = await self._fetch_grants(base_url, token, cfg, agreement_id)
         except CloudApiError as exc:
             return ServiceStatus(error=str(exc), last_updated=now)
         except aiohttp.ClientError as exc:
@@ -112,31 +83,51 @@ class Plugin(ServicePlugin):
             )
             return ServiceStatus(error=f"сеть/API: {exc}", last_updated=now)
 
-        balance = _pick_balance(balance_payload, balance_field)
-        subscription_end = _find_forecast(balance_payload)
-        if subscription_end is None:
-            subscription_end = _forecast_from_days_left(balance_payload, now)
-
+        active_grants = _pick_active_grants(grants_payload)
         details = {
             "base_url": base_url,
             "agreement_id": agreement_id,
-            "balance_field": balance_field,
             "auth": _resolve_auth_mode(cfg),
         }
-        if customer_id := cfg.get("customer_id"):
-            details["customer_id"] = customer_id
-        if subscription_end is not None:
-            details["forecast_source"] = "api"
 
-        resolved_currency = (
-            str(currency_override) if currency_override else _find_currency(balance_payload)
-        )
+        if active_grants:
+            balance, subscription_end = _aggregate_grants(active_grants)
+            details["source"] = "grant"
+            details["grant_count"] = len(active_grants)
+            if subscription_end is not None:
+                details["forecast_source"] = "grant_expire_at"
+        else:
+            try:
+                balance_payload = await self._fetch_balance(
+                    base_url, token, cfg, agreement_id
+                )
+            except CloudApiError as exc:
+                return ServiceStatus(error=str(exc), last_updated=now)
+            except aiohttp.ClientError as exc:
+                logger.debug(
+                    "Cloud.ru HTTP error for %s: %s",
+                    self.service.name,
+                    exc,
+                    exc_info=True,
+                )
+                return ServiceStatus(error=f"сеть/API: {exc}", last_updated=now)
+
+            balance = _to_float(balance_payload.get("balance"))
+            subscription_end = None
+            details["source"] = "balance"
+            details["subscription_end_display"] = "--"
+            if balance_payload.get("is_trial") is not None:
+                details["is_trial"] = bool(balance_payload.get("is_trial"))
+
+        resolved_currency = str(currency_override) if currency_override else "RUB"
         logger.debug(
-            "Cloud fetch_status ok: service=%s balance=%s currency=%s subscription_end=%s",
+            "Cloud fetch_status ok: service=%s balance=%s currency=%s "
+            "subscription_end=%s source=%s",
             self.service.name,
             balance,
             resolved_currency,
             subscription_end,
+            details.get("source"),
         )
         return ServiceStatus(
             balance=balance,
@@ -220,82 +211,56 @@ class Plugin(ServicePlugin):
         self._token_expires_at = time.monotonic() + ttl
         return self._cached_token
 
-    async def _fetch_balance_payload(
+    async def _fetch_grants(
         self, base_url: str, token: str, cfg: dict, agreement_id: str
     ) -> dict:
-        """Перебирает типовые пути balance API до первого успешного ответа.
+        """GET списка грантов договора с фильтром по статусам.
 
         Args:
-            base_url: organization API base.
+            base_url: BFF console API base.
             token: Токен авторизации.
-            cfg: ``plugin_config`` (``balance_path``, ``customer_id``, …).
+            cfg: ``plugin_config``.
             agreement_id: UUID договора.
 
         Returns:
-            JSON с полями баланса.
-
-        Raises:
-            CloudApiError: Ни один candidate path не подошёл.
+            JSON с полем ``bonus_grants``.
         """
         auth = _resolve_auth_mode(cfg)
-        logger.debug(
-            "Cloud _fetch_balance_payload: service=%s agreement_id=%s auth=%s",
-            self.service.name,
-            agreement_id,
-            auth,
-        )
-        if custom := cfg.get("balance_path"):
-            path = str(custom).format(
-                agreement_id=agreement_id,
-                customer_id=cfg.get("customer_id", ""),
-            )
-            return await self._get_json(base_url, path, token, cfg, auth)
+        query = urlencode([("statuses", status) for status in GRANT_QUERY_STATUSES])
+        path = f"/v1/agreements/{agreement_id}/grants?{query}"
+        return await self._get_json(base_url, path, token, cfg, auth)
 
-        customer_id = str(cfg.get("customer_id") or "").strip()
-        candidates = [
-            f"/v1/agreements/{agreement_id}/balance",
-            f"/v1/agreements/{agreement_id}",
-            f"/v1/balance?agreement_id={agreement_id}",
-        ]
-        if customer_id:
-            candidates.extend(
-                [
-                    f"/v1/customers/{customer_id}/agreements/{agreement_id}/balance",
-                    f"/v1/customers/{customer_id}/balance?agreement_id={agreement_id}",
-                ]
-            )
+    async def _fetch_balance(
+        self, base_url: str, token: str, cfg: dict, agreement_id: str
+    ) -> dict:
+        """GET баланса договора из BFF v2.
 
-        last_error: str | None = None
-        for path in candidates:
-            try:
-                payload = await self._get_json(base_url, path, token, cfg, auth)
-                if _looks_like_balance_payload(payload):
-                    logger.debug("Cloud: баланс получен через %s", path)
-                    return payload
-            except CloudApiError as exc:
-                last_error = str(exc)
-                logger.debug(
-                    "Cloud.ru: %s не подошёл для %s: %s",
-                    path,
-                    self.service.name,
-                    exc,
-                )
+        Args:
+            base_url: BFF console API base.
+            token: Токен авторизации.
+            cfg: ``plugin_config``.
+            agreement_id: UUID договора.
 
-        if last_error:
-            raise CloudApiError(
-                f"не удалось получить баланс договора (последняя ошибка: {last_error}). "
-                "Укажите balance_path в plugin_config, если ваш endpoint отличается"
-            )
-        raise CloudApiError("не удалось получить баланс договора")
+        Returns:
+            JSON с полем ``balance`` (рубли).
+        """
+        auth = _resolve_auth_mode(cfg)
+        path = f"/v2/agreements/{agreement_id}/balance"
+        return await self._get_json(base_url, path, token, cfg, auth)
 
     async def _get_json(
-        self, base_url: str, path: str, token: str, cfg: dict, auth: str
+        self,
+        base_url: str,
+        path: str,
+        token: str,
+        cfg: dict,
+        auth: str,
     ) -> dict:
-        """GET к organization API.
+        """GET к BFF console API.
 
         Args:
             base_url: Базовый URL.
-            path: Относительный или абсолютный путь.
+            path: Относительный путь (может содержать query).
             token: Токен.
             cfg: Конфиг (для совместимости сигнатуры).
             auth: Режим ``key`` / ``bearer`` / ``api_key``.
@@ -304,7 +269,12 @@ class Plugin(ServicePlugin):
             JSON-объект ответа.
         """
         url = path if path.startswith("http") else f"{base_url}/{path.lstrip('/')}"
-        return await self._request_json("GET", url, cfg, auth_header=_auth_header(token, auth))
+        return await self._request_json(
+            "GET",
+            url,
+            cfg,
+            auth_header=_auth_header(token, auth),
+        )
 
     async def _request_json(
         self,
@@ -315,7 +285,7 @@ class Plugin(ServicePlugin):
         json_body: dict | None = None,
         auth_header: dict[str, str] | None,
     ) -> dict:
-        """Универсальный HTTP-запрос с разбором JSON (IAM и organization API).
+        """Универсальный HTTP-запрос с разбором JSON (IAM и BFF API).
 
         Args:
             method: HTTP-метод.
@@ -346,7 +316,9 @@ class Plugin(ServicePlugin):
             self.service.name,
             json_body is not None,
         )
-        async with self._http.request(method, url, headers=headers, json=json_body) as resp:
+        async with self._http.request(
+            method, url, headers=headers, json=json_body
+        ) as resp:
             logger.debug("Cloud: %s %s -> HTTP %s", method, url, resp.status)
             try:
                 payload = await resp.json(content_type=None)
@@ -372,6 +344,48 @@ class Plugin(ServicePlugin):
                 raise CloudApiError(f"{url}: неожиданный формат ответа")
 
             return payload
+
+
+def _pick_active_grants(payload: dict) -> list[dict]:
+    """Возвращает гранты со статусом READY из ответа BFF.
+
+    Args:
+        payload: JSON с ``bonus_grants``.
+
+    Returns:
+        Список активных грантов.
+    """
+    grants = payload.get("bonus_grants")
+    if not isinstance(grants, list):
+        return []
+    return [
+        grant
+        for grant in grants
+        if isinstance(grant, dict) and grant.get("status") == GRANT_STATUS_READY
+    ]
+
+
+def _aggregate_grants(grants: list[dict]) -> tuple[float | None, datetime | None]:
+    """Суммирует ``current_amount`` и выбирает ближайший ``expire_at``.
+
+    Args:
+        grants: Активные гранты.
+
+    Returns:
+        Пара (баланс, дата окончания).
+    """
+    amounts: list[float] = []
+    expires: list[datetime] = []
+    for grant in grants:
+        amount = _to_float(grant.get("current_amount"))
+        if amount is not None:
+            amounts.append(amount)
+        expire_at = _parse_datetime(grant.get("expire_at"))
+        if expire_at is not None:
+            expires.append(expire_at)
+    balance = sum(amounts) if amounts else None
+    subscription_end = min(expires) if expires else None
+    return balance, subscription_end
 
 
 def _resolve_auth_mode(cfg: dict) -> str:
@@ -448,172 +462,6 @@ def _api_message(payload: dict | None) -> str | None:
     if isinstance(err, str):
         return err
     return payload.get("message") or payload.get("detail") or payload.get("status_msg")
-
-
-def _looks_like_balance_payload(payload: dict) -> bool:
-    """Эвристика: похож ли JSON на ответ с балансом договора.
-
-    Args:
-        payload: Тело ответа candidate path.
-
-    Returns:
-        ``True``, если есть типовые ключи или вложенный баланс.
-    """
-    if any(k in payload for k in ("balance", "money", "bonus", "agreement", "data")):
-        return True
-    return _find_balance_value(payload) is not None or _find_days_left(payload) is not None
-
-
-def _pick_balance(data: dict, field: str) -> float | None:
-    """Извлекает значение баланса по имени поля с обходом вложенных структур.
-
-    Args:
-        data: Фрагмент JSON ответа.
-        field: ``balance_field`` из конфига.
-
-    Returns:
-        Числовой баланс или ``None``.
-    """
-    if field == "total":
-        parts = [
-            _pick_balance(data, "real"),
-            _pick_balance(data, "bonus"),
-            _pick_balance(data, "money"),
-            _pick_balance(data, "balance"),
-        ]
-        present = [p for p in parts if p is not None]
-        return sum(present) if present else None
-
-    for key in (field, "balance", "money", "amount", "value"):
-        if key in data:
-            val = _to_float(data.get(key))
-            if val is not None:
-                return val
-
-    nested = data.get("agreement") or data.get("balance") or data.get("data")
-    if isinstance(nested, dict):
-        return _pick_balance(nested, field)
-    if isinstance(nested, list) and nested:
-        first = nested[0]
-        if isinstance(first, dict):
-            return _pick_balance(first, field)
-
-    return _find_balance_value(data)
-
-
-def _find_balance_value(obj: dict, depth: int = 0) -> float | None:
-    """Рекурсивный поиск числового баланса в JSON.
-
-    Args:
-        obj: Вложенный объект.
-        depth: Глубина (лимит 5).
-
-    Returns:
-        Первое найденное число или ``None``.
-    """
-    if depth > 5 or not isinstance(obj, dict):
-        return None
-    for key in ("balance", "money", "amount", "available", "value"):
-        if key in obj:
-            val = _to_float(obj[key])
-            if val is not None:
-                return val
-    for value in obj.values():
-        if isinstance(value, dict):
-            found = _find_balance_value(value, depth + 1)
-            if found is not None:
-                return found
-    return None
-
-
-def _find_currency(obj: dict, depth: int = 0) -> str | None:
-    """Рекурсивный поиск кода валюты в JSON.
-
-    Args:
-        obj: Вложенный объект.
-        depth: Глубина (лимит 5).
-
-    Returns:
-        Строка валюты или ``None``.
-    """
-    if depth > 5 or not isinstance(obj, dict):
-        return None
-    for key in ("currency", "currency_code", "currencyCode"):
-        if key in obj and obj[key]:
-            return str(obj[key])
-    for value in obj.values():
-        if isinstance(value, dict):
-            found = _find_currency(value, depth + 1)
-            if found:
-                return found
-    return None
-
-
-def _find_forecast(obj: dict, depth: int = 0) -> datetime | None:
-    """Рекурсивный поиск даты окончания средств по известным ключам.
-
-    Args:
-        obj: Вложенный объект ответа.
-        depth: Глубина (лимит 6).
-
-    Returns:
-        Дата в UTC или ``None``.
-    """
-    if depth > 6 or not isinstance(obj, dict):
-        return None
-    for key in _FORECAST_KEYS:
-        if key in obj:
-            parsed = _parse_datetime(obj[key])
-            if parsed:
-                return parsed
-    for value in obj.values():
-        if isinstance(value, dict):
-            parsed = _find_forecast(value, depth + 1)
-            if parsed:
-                return parsed
-    return None
-
-
-def _find_days_left(obj: dict, depth: int = 0) -> int | None:
-    """Рекурсивный поиск поля «дней хватит баланса».
-
-    Args:
-        obj: Вложенный объект.
-        depth: Глубина (лимит 6).
-
-    Returns:
-        Целое число дней или ``None``.
-    """
-    if depth > 6 or not isinstance(obj, dict):
-        return None
-    for key in _DAYS_LEFT_KEYS:
-        if key in obj:
-            try:
-                return int(float(obj[key]))
-            except (TypeError, ValueError):
-                continue
-    for value in obj.values():
-        if isinstance(value, dict):
-            found = _find_days_left(value, depth + 1)
-            if found is not None:
-                return found
-    return None
-
-
-def _forecast_from_days_left(obj: dict, now: datetime) -> datetime | None:
-    """Вычисляет дату окончания как ``now + days_left``.
-
-    Args:
-        obj: JSON ответа с полем days_left.
-        now: Текущее время UTC.
-
-    Returns:
-        Прогнозная дата или ``None``.
-    """
-    days = _find_days_left(obj)
-    if days is None or days < 0:
-        return None
-    return now + timedelta(days=days)
 
 
 def _to_float(value) -> float | None:

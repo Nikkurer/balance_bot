@@ -1,8 +1,18 @@
 # Cloud.ru (`cloud`)
 
-Мониторинг баланса и прогноза отключения по договору через [API Cloud.ru Evolution](https://cloud.ru/docs/billing/ug/topics/api-ref_start) (`organization.api.cloud.ru`).
+Мониторинг баланса договора через BFF личного кабинета Cloud.ru (`console.cloud.ru/u-api/bff-console`).
 
 Для каждого договора — отдельная запись в `services` со своим `agreement_id` и ключами доступа.
+
+## Логика опроса
+
+1. Запрашиваются **гранты** договора (`/v1/agreements/{id}/grants`) со статусами `READY` и `NOT_STARTED`.
+2. Если есть **активный грант** (`BONUS_GRANT_STATUS_READY`):
+   - **баланс** — сумма полей `current_amount` по всем READY-грантам;
+   - **подписка до** — ближайший `expire_at` среди них.
+3. Если активного гранта нет — запрашивается **баланс** (`/v2/agreements/{id}/balance`):
+   - **баланс** — поле `balance` (рубли);
+   - дата окончания неизвестна — в боте показывается **«--»**.
 
 ## Как получить доступ к API
 
@@ -50,9 +60,7 @@ access_token: "..."
     key_id: "YOUR_KEY_ID"
     key_secret: "YOUR_KEY_SECRET"
     agreement_id: "00000000-0000-0000-0000-000000000000"
-    customer_id: "00000000-0000-0000-0000-000000000001"  # опционально
     currency: RUB
-    balance_field: balance   # balance | money | real | bonus | total
 ```
 
 Несколько договоров — несколько сервисов с разными `agreement_id` и при необходимости разными ключами.
@@ -67,31 +75,27 @@ access_token: "..."
 | `access_token` | да* | — | Bearer-токен (`auth: bearer`) |
 | `api_token` | да* | — | API-ключ или Bearer (зависит от `auth`) |
 | `auth` | нет | `key` | `key`, `bearer`, `api_key` |
-| `customer_id` | нет | — | ID организации/клиента (опционально) |
-| `base_url` | нет | `https://organization.api.cloud.ru` | Базовый URL billing API |
+| `base_url` | нет | `https://console.cloud.ru/u-api/bff-console` | Базовый URL BFF console API |
 | `iam_url` | нет | `https://iam.api.cloud.ru/api/v1/auth/token` | URL обмена key → token |
-| `balance_path` | нет | авто | Явный путь, например `v1/agreements/{agreement_id}/balance` |
-| `currency` | нет | из ответа | Валюта для `/status` |
-| `balance_field` | нет | `balance` | Какое поле считать балансом: `balance`, `money`, `real`, `bonus`, `total` |
+| `currency` | нет | `RUB` | Валюта для `/status` |
 
 \* Обязательность зависит от выбранного `auth`.
 
 ## Откуда берутся данные
 
-| Поле бота | Источник API |
-|-----------|--------------|
-| `balance` | Ответ billing API по договору (поле из `balance_field`) |
-| `subscription_end` | Дата из ответа API (`*_date`, `forecast`, …) или `now + days_left`, если API отдаёт только «дней хватит» |
-| `currency` | из ответа или `plugin_config.currency` |
+| Поле бота | Источник |
+|-----------|----------|
+| `balance` | Сумма `current_amount` активных грантов или поле `balance` из `/v2/.../balance` |
+| `subscription_end` | `expire_at` активного гранта; при балансе без гранта — «--» |
+| `currency` | `plugin_config.currency` (по умолчанию `RUB`) |
 
 Авторизация: `Authorization: Bearer <token>` (после обмена key_id/key_secret) или `Authorization: Api-Key <ключ>`.
 
-Плагин по умолчанию пробует несколько типовых путей (`/v1/agreements/{id}/balance`, `/v1/agreements/{id}`, …). Если у вас другой endpoint — укажите `balance_path`.
-
-Публичная документация Cloud.ru подробно описывает API **потребления** (`/v1/consumption`, `/v2/consumption`); endpoint баланса в ЛК может отличаться по версии платформы — при ошибках уточните путь в поддержке Cloud.ru или через DevTools браузера в разделе «Контроль затрат».
+Фильтр статусов грантов передаётся повторяющимся query-параметром:
+`?statuses=BONUS_GRANT_STATUS_READY&statuses=BONUS_GRANT_STATUS_NOT_STARTED`.
 
 ## Частые проблемы
 
 - **403 / нет доступа** — недостаточно ролей (нужен админ организации или админ затрат) или неверный договор.
-- **Не удалось получить баланс** — задайте `balance_path` вручную по фактическому запросу из ЛК.
-- **Нет `subscription_end`** — API не вернул дату/дни; проверьте виджет баланса в панели и поля ответа.
+- **Ошибка grants/balance** — проверьте `agreement_id` и срок действия IAM-токена.
+- **Подписка «--»** — нет активного гранта; отображается баланс договора, дату исчерпания средств API не отдаёт.

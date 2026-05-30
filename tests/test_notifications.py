@@ -106,6 +106,16 @@ class TestFormatMessages:
         assert "2026-06-01 03:00" in text
         assert "MSK" in text
 
+    def test_format_status_subscription_end_display(self) -> None:
+        status = ServiceStatus(
+            balance=5.63,
+            currency="RUB",
+            details={"subscription_end_display": "--"},
+        )
+        text = format_status_message("cloud-main", status)
+        assert "5.63" in text
+        assert "Подписка до: --" in text
+
     @pytest.mark.parametrize(
         ("alert", "fragment"),
         [

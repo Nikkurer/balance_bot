@@ -16,9 +16,12 @@ AEZA_RU_DESKTOP = "https://my.aeza.ru/api/desktop"
 AEZA_RU_ACCOUNTS = "https://my.aeza.ru/api/accounts"
 VDSINA_RU_BALANCE = "https://userapi.vdsina.ru/v1/account.balance"
 VDSINA_RU_ACCOUNT = "https://userapi.vdsina.ru/v1/account"
-CLOUD_BALANCE = (
-    "https://organization.api.cloud.ru/v1/agreements/agr-111/balance"
+CLOUD_BFF = "https://console.cloud.ru/u-api/bff-console"
+CLOUD_GRANTS = (
+    f"{CLOUD_BFF}/v1/agreements/agr-111/grants"
+    "?statuses=BONUS_GRANT_STATUS_READY&statuses=BONUS_GRANT_STATUS_NOT_STARTED"
 )
+CLOUD_BALANCE = f"{CLOUD_BFF}/v2/agreements/agr-111/balance"
 
 
 @pytest.fixture
@@ -68,8 +71,6 @@ def cloud_plugin(make_service):
             "agreement_id": "agr-111",
             "auth": "bearer",
             "access_token": "cloud-token",
-            "balance_path": "/v1/agreements/{agreement_id}/balance",
-            "base_url": "https://organization.api.cloud.ru",
             "currency": "RUB",
         },
     )
@@ -313,16 +314,20 @@ async def test_cloud_request_json_http_500_includes_trace_id(
 
 
 @pytest.mark.asyncio
-async def test_cloud_fetch_status_success(cloud_plugin: CloudPlugin) -> None:
+async def test_cloud_fetch_status_uses_active_grant(cloud_plugin: CloudPlugin) -> None:
     routes = [
         HttpRoute(
             "GET",
-            CLOUD_BALANCE,
+            CLOUD_GRANTS,
             200,
             json_body={
-                "balance": 2500.75,
-                "currency": "RUB",
-                "balance_run_out_date": "2026-10-20T12:00:00+00:00",
+                "bonus_grants": [
+                    {
+                        "current_amount": "2753.88",
+                        "expire_at": "2026-06-19T06:00:00Z",
+                        "status": "BONUS_GRANT_STATUS_READY",
+                    }
+                ]
             },
         )
     ]
@@ -330,17 +335,76 @@ async def test_cloud_fetch_status_success(cloud_plugin: CloudPlugin) -> None:
         status = await cloud_plugin.fetch_status()
 
     assert status.error is None
+    assert status.balance == 2753.88
+    assert status.currency == "RUB"
+    assert status.subscription_end == datetime(2026, 6, 19, 6, 0, tzinfo=timezone.utc)
+    assert status.details["source"] == "grant"
+    assert status.details["grant_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cloud_fetch_status_uses_balance_when_no_active_grant(
+    cloud_plugin: CloudPlugin,
+) -> None:
+    routes = [
+        HttpRoute(
+            "GET",
+            CLOUD_GRANTS,
+            200,
+            json_body={
+                "bonus_grants": [
+                    {
+                        "current_amount": "100.00",
+                        "expire_at": "2026-12-01T00:00:00Z",
+                        "status": "BONUS_GRANT_STATUS_NOT_STARTED",
+                    }
+                ]
+            },
+        ),
+        HttpRoute(
+            "GET",
+            CLOUD_BALANCE,
+            200,
+            json_body={"balance": 5.63, "is_trial": False},
+        ),
+    ]
+    with patch_aiohttp_session("plugins.cloud", routes):
+        status = await cloud_plugin.fetch_status()
+
+    assert status.error is None
+    assert status.balance == 5.63
+    assert status.currency == "RUB"
+    assert status.subscription_end is None
+    assert status.details["source"] == "balance"
+    assert status.details["subscription_end_display"] == "--"
+
+
+@pytest.mark.asyncio
+async def test_cloud_fetch_status_success(cloud_plugin: CloudPlugin) -> None:
+    routes = [
+        HttpRoute("GET", CLOUD_GRANTS, 200, json_body={"bonus_grants": []}),
+        HttpRoute(
+            "GET",
+            CLOUD_BALANCE,
+            200,
+            json_body={"balance": 2500.75, "is_trial": False},
+        ),
+    ]
+    with patch_aiohttp_session("plugins.cloud", routes):
+        status = await cloud_plugin.fetch_status()
+
+    assert status.error is None
     assert status.balance == 2500.75
     assert status.currency == "RUB"
-    assert status.subscription_end == datetime(
-        2026, 10, 20, 12, 0, tzinfo=timezone.utc
-    )
+    assert status.subscription_end is None
+    assert status.details["subscription_end_display"] == "--"
     assert status.details["agreement_id"] == "agr-111"
 
 
 @pytest.mark.asyncio
 async def test_cloud_fetch_status_maps_http_500_to_error(cloud_plugin: CloudPlugin) -> None:
     routes = [
+        HttpRoute("GET", CLOUD_GRANTS, 200, json_body={"bonus_grants": []}),
         HttpRoute(
             "GET",
             CLOUD_BALANCE,
@@ -349,7 +413,7 @@ async def test_cloud_fetch_status_maps_http_500_to_error(cloud_plugin: CloudPlug
                 "message": "Service unavailable",
                 "correlationId": "corr-cloud-1",
             },
-        )
+        ),
     ]
     with patch_aiohttp_session("plugins.cloud", routes):
         status = await cloud_plugin.fetch_status()

@@ -73,7 +73,10 @@ def format_status_message(service_name: str, status: ServiceStatus) -> str:
         currency = status.currency or ""
         lines.append(f"💰 Баланс: {status.balance:g} {currency}".strip())
 
-    if status.subscription_end is not None:
+    subscription_display = status.details.get("subscription_end_display")
+    if subscription_display is not None:
+        lines.append(f"📅 Подписка до: {subscription_display}")
+    elif status.subscription_end is not None:
         end = to_bot_timezone(status.subscription_end)
         lines.append(f"📅 Подписка до: {end.strftime('%Y-%m-%d %H:%M %Z')}")
 

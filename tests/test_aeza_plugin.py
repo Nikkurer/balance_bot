@@ -1,9 +1,8 @@
-"""Тесты служебных функций HTTP-плагинов."""
+"""Unit-тесты служебных функций плагина Aeza."""
 
 from plugins.aeza import _api_message as aeza_api_message
 from plugins.aeza import _extract_trace_id as aeza_extract_trace_id
 from plugins.aeza import _parse_balance
-from plugins.cloud import _extract_trace_id as cloud_extract_trace_id
 
 
 def test_aeza_api_message_prefers_error_message() -> None:
@@ -28,11 +27,6 @@ def test_aeza_extract_trace_id_from_error_object() -> None:
 
 def test_aeza_extract_trace_id_returns_none_for_unknown_payload() -> None:
     assert aeza_extract_trace_id({"error": {"message": "boom"}}) is None
-
-
-def test_cloud_extract_trace_id_from_correlation_id() -> None:
-    payload = {"correlationId": "corr-1"}
-    assert cloud_extract_trace_id(payload) == "corr-1"
 
 
 def test_aeza_parse_balance_converts_kopecks_to_rubles() -> None:
