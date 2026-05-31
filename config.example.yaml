@@ -8,6 +8,14 @@ plugins_dir: plugins
 # Часовая зона бота (IANA): используется в сообщениях и timestamp логов
 timezone: UTC
 
+# История баланса (SQLite); retention_days/max_size_mb: 0 = не применять
+# history:
+#   enabled: true
+#   path: data/balance_bot.db
+#   retention_days: 365
+#   max_size_mb: 32
+#   record_errors: false
+
 services:
   # Документация: docs/plugins/vdsina.md, docs/plugins/aeza.md, docs/plugins/cloud.md, docs/plugins/mock.md
   # --- VDSina: один плагин, два аккаунта (ru / com) — разные api_token ---

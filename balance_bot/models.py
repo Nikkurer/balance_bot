@@ -49,6 +49,25 @@ class ServiceConfig:
 
 
 @dataclass
+class HistoryConfig:
+    """Настройки персистентной истории баланса (SQLite).
+
+    Attributes:
+        enabled: Запись истории после успешного опроса.
+        path: Путь к файлу БД (относительно каталога конфига или абсолютный).
+        retention_days: Удалять записи старше N дней; ``0`` — не применять.
+        max_size_mb: Удалять старые записи, пока файл БД не ≤ N МБ; ``0`` — не применять.
+        record_errors: Записывать строки с ``error`` (баланс ``None``).
+    """
+
+    enabled: bool = False
+    path: str = "data/balance_bot.db"
+    retention_days: int = 0
+    max_size_mb: int = 0
+    record_errors: bool = False
+
+
+@dataclass
 class AppConfig:
     """Корневая конфигурация бота после загрузки YAML.
 
@@ -58,6 +77,7 @@ class AppConfig:
         services: Сервисы для мониторинга.
         plugins_dir: Каталог с файлами плагинов (относительный или абсолютный).
         timezone: IANA timezone для сообщений и логов (например, ``Europe/Moscow``).
+        history: Параметры SQLite-истории баланса.
     """
 
     bot_token: str
@@ -65,3 +85,4 @@ class AppConfig:
     services: list[ServiceConfig]
     plugins_dir: str = "plugins"
     timezone: str = "UTC"
+    history: HistoryConfig = field(default_factory=HistoryConfig)

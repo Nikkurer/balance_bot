@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from balance_bot.models import AppConfig, ServiceConfig
+from balance_bot.models import AppConfig, HistoryConfig, ServiceConfig
 from balance_bot.validation import ConfigError, validate_config
 
 logger = logging.getLogger(__name__)
@@ -101,12 +101,15 @@ def load_config(path: str | Path) -> AppConfig:
     if not isinstance(timezone_name, str):
         raise ConfigError("timezone: должен быть строкой (IANA, например Europe/Moscow)")
 
+    history = _parse_history(raw.get("history"))
+
     config = AppConfig(
         bot_token=bot_token,
         allowed_user_ids=allowed_user_ids,
         services=services,
         plugins_dir=plugins_dir,
         timezone=timezone_name,
+        history=history,
     )
     validate_config(config)
     logger.debug(
@@ -117,3 +120,61 @@ def load_config(path: str | Path) -> AppConfig:
         config.plugins_dir,
     )
     return config
+
+
+def _parse_history(raw) -> HistoryConfig:
+    """Разбирает секцию ``history`` из YAML.
+
+    Args:
+        raw: Значение ``history`` или ``None``.
+
+    Returns:
+        ``HistoryConfig`` (по умолчанию отключена).
+
+    Raises:
+        ConfigError: Неверный тип или значение полей.
+    """
+    if raw is None:
+        return HistoryConfig()
+    if not isinstance(raw, dict):
+        raise ConfigError("history: должен быть объектом")
+
+    enabled = bool(raw.get("enabled", False))
+    path = raw.get("path", "data/balance_bot.db")
+    if not isinstance(path, str) or not path.strip():
+        raise ConfigError("history.path: должен быть непустой строкой")
+
+    retention_days = _parse_history_int(raw, "retention_days", default=0)
+    max_size_mb = _parse_history_int(raw, "max_size_mb", default=0)
+    record_errors = bool(raw.get("record_errors", False))
+
+    return HistoryConfig(
+        enabled=enabled,
+        path=path.strip(),
+        retention_days=retention_days,
+        max_size_mb=max_size_mb,
+        record_errors=record_errors,
+    )
+
+
+def _parse_history_int(raw: dict, key: str, *, default: int) -> int:
+    """Парсит целочисленное поле секции history.
+
+    Args:
+        raw: Секция ``history``.
+        key: Имя поля.
+        default: Значение, если ключ отсутствует.
+
+    Returns:
+        Целое число.
+
+    Raises:
+        ConfigError: Неверный тип или значение.
+    """
+    if key not in raw:
+        return default
+    value = raw[key]
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"history.{key}: должно быть целым числом") from exc

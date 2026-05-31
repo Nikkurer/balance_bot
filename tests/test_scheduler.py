@@ -20,6 +20,30 @@ class _StaticPlugin(ServicePlugin):
 
 
 @pytest.mark.asyncio
+async def test_poll_once_records_history(make_service) -> None:
+    from unittest.mock import AsyncMock
+
+    state = StateStore()
+    status = ServiceStatus(balance=10.0, last_updated=datetime.now(timezone.utc))
+    plugin = _StaticPlugin(make_service(), status)
+    history = AsyncMock()
+    history.record = AsyncMock()
+    history.prune = AsyncMock()
+    poller = ServicePoller(
+        make_service(),
+        plugin,
+        state,
+        on_notify=lambda _: None,
+        history=history,
+    )
+
+    await poller.poll_once()
+
+    history.record.assert_awaited_once()
+    history.prune.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_poll_once_stores_status(make_service) -> None:
     state = StateStore()
     status = ServiceStatus(balance=10.0, last_updated=datetime.now(timezone.utc))

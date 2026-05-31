@@ -74,6 +74,8 @@ def validate_config(config: AppConfig) -> None:
             prefix = f"services[{i}]"
             errors.extend(_validate_service(service, prefix, seen_names))
 
+    errors.extend(_validate_history(config))
+
     if errors:
         raise ConfigError("\n".join(f"  - {e}" for e in errors))
 
@@ -109,4 +111,30 @@ def _validate_service(
             f"{prefix}.poll_interval_seconds: должен быть больше 0"
         )
 
+    return errors
+
+
+def _validate_history(config: AppConfig) -> list[str]:
+    """Проверяет секцию ``history``.
+
+    Args:
+        config: Корневая конфигурация.
+
+    Returns:
+        Список ошибок.
+    """
+    history = config.history
+    if not history.enabled:
+        return []
+
+    errors: list[str] = []
+    if history.retention_days < 0:
+        errors.append("history.retention_days: должен быть >= 0 (0 — не применять)")
+    if history.max_size_mb < 0:
+        errors.append("history.max_size_mb: должен быть >= 0 (0 — не применять)")
+    if history.retention_days <= 0 and history.max_size_mb <= 0:
+        errors.append(
+            "history: при enabled задайте retention_days > 0 и/или max_size_mb > 0 "
+            "(0 — не применять очистку по этому параметру)"
+        )
     return errors

@@ -1,13 +1,19 @@
 """Планировщик периодического опроса сервисов и отправки алертов."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from balance_bot.models import ServiceConfig, ServiceStatus
 from balance_bot.notifications import evaluate_alerts, format_alert_message
 from balance_bot.plugins.base import ServicePlugin
 from balance_bot.state import StateStore
+
+if TYPE_CHECKING:
+    from balance_bot.history import HistoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +48,7 @@ class ServicePoller:
         plugin: ServicePlugin,
         state: StateStore,
         on_notify: NotifyCallback,
+        history: HistoryStore | None = None,
     ) -> None:
         """Создаёт poller без запуска фоновой задачи.
 
@@ -50,11 +57,13 @@ class ServicePoller:
             plugin: Экземпляр плагина для этого сервиса.
             state: Общее хранилище состояния.
             on_notify: Async-колбэк для push-уведомлений (HTML-текст).
+            history: Опциональное хранилище истории баланса.
         """
         self.service = service
         self.plugin = plugin
         self.state = state
         self.on_notify = on_notify
+        self.history = history
         self._task: asyncio.Task | None = None
 
     async def poll_once(self) -> ServiceStatus:
@@ -108,6 +117,9 @@ class ServicePoller:
 
         self.state.set_status(name, status)
 
+        if self.history is not None:
+            await self._persist_history(name, status)
+
         new_alerts = evaluate_alerts(self.service, status)
         prev_alerts = self.state.get_active_alerts(name)
         risen = new_alerts - prev_alerts
@@ -128,6 +140,29 @@ class ServicePoller:
             await self.on_notify(message)
 
         return status
+
+    async def _persist_history(self, name: str, status: ServiceStatus) -> None:
+        """Записывает снимок в историю и применяет retention.
+
+        Args:
+            name: Имя сервиса.
+            status: Снимок опроса.
+        """
+        assert self.history is not None
+        try:
+            await self.history.record(name, self.service.plugin, status)
+            await self.history.prune()
+        except Exception as exc:
+            logger.info(
+                "История баланса '%s': не удалось записать или очистить — %s",
+                name,
+                exc,
+            )
+            logger.debug(
+                "История баланса '%s': ошибка записи",
+                name,
+                exc_info=True,
+            )
 
     async def _loop(self) -> None:
         """Бесконечный цикл: ``poll_once`` → sleep(interval)."""
@@ -159,15 +194,22 @@ class ServicePoller:
 class Scheduler:
     """Управляет несколькими ``ServicePoller`` и общим опросом по запросу."""
 
-    def __init__(self, state: StateStore, on_notify: NotifyCallback) -> None:
+    def __init__(
+        self,
+        state: StateStore,
+        on_notify: NotifyCallback,
+        history: HistoryStore | None = None,
+    ) -> None:
         """Создаёт пустой планировщик.
 
         Args:
             state: Хранилище снимков и алертов.
             on_notify: Колбэк для уведомлений всем разрешённым пользователям.
+            history: Опциональное хранилище истории баланса.
         """
         self.state = state
         self.on_notify = on_notify
+        self.history = history
         self._pollers: list[ServicePoller] = []
 
     def add_poller(self, service: ServiceConfig, plugin: ServicePlugin) -> None:
@@ -178,7 +220,9 @@ class Scheduler:
             plugin: Уже созданный экземпляр плагина.
         """
         self._pollers.append(
-            ServicePoller(service, plugin, self.state, self.on_notify)
+            ServicePoller(
+                service, plugin, self.state, self.on_notify, history=self.history
+            )
         )
         logger.debug(
             "Scheduler: добавлен poller service=%s plugin=%s",

@@ -55,6 +55,32 @@ services:
     assert config.timezone == "Europe/Moscow"
 
 
+def test_load_config_history_section(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+telegram:
+  bot_token: "999888777:ZZZ_TestToken_abc"
+  allowed_user_ids: [42]
+history:
+  enabled: true
+  path: data/test.db
+  retention_days: 0
+  max_size_mb: 10
+services:
+  - name: demo
+    plugin: mock
+    poll_interval_seconds: 120
+""",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    assert config.history.enabled is True
+    assert config.history.path == "data/test.db"
+    assert config.history.retention_days == 0
+    assert config.history.max_size_mb == 10
+
+
 def test_load_config_missing_telegram_section(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     path.write_text("services: []\n", encoding="utf-8")

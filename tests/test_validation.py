@@ -2,7 +2,7 @@
 
 import pytest
 
-from balance_bot.models import ServiceConfig
+from balance_bot.models import HistoryConfig, ServiceConfig
 from balance_bot.validation import ConfigError, validate_config
 
 
@@ -84,3 +84,32 @@ def test_non_positive_poll_interval_raises(make_app_config) -> None:
     )
     with pytest.raises(ConfigError, match="poll_interval_seconds"):
         validate_config(make_app_config(services=[bad]))
+
+
+def test_history_enabled_requires_retention_policy(make_app_config) -> None:
+    with pytest.raises(ConfigError, match="retention_days > 0 и/или max_size_mb > 0"):
+        validate_config(
+            make_app_config(
+                history=HistoryConfig(
+                    enabled=True,
+                    retention_days=0,
+                    max_size_mb=0,
+                )
+            )
+        )
+
+
+def test_history_enabled_with_retention_days_only(make_app_config) -> None:
+    validate_config(
+        make_app_config(
+            history=HistoryConfig(enabled=True, retention_days=30, max_size_mb=0)
+        )
+    )
+
+
+def test_history_enabled_with_max_size_only(make_app_config) -> None:
+    validate_config(
+        make_app_config(
+            history=HistoryConfig(enabled=True, retention_days=0, max_size_mb=16)
+        )
+    )

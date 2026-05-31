@@ -12,5 +12,8 @@ wheels/
 # Local config (may contain secrets)
 config.yaml
 
+# SQLite history (balance time series)
+data/
+
 # Локальные переменные для docker compose (образ GHCR)
 .env

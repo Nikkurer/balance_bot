@@ -13,6 +13,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from balance_bot.bot import create_dispatcher, notify_users, register_bot_commands
 from balance_bot.logging_setup import setup_logging
 from balance_bot.config import ConfigError, load_config
+from balance_bot.history import HistoryStore, resolve_history_path
 from balance_bot.plugins.loader import (
     create_plugin,
     ensure_plugins_for_services,
@@ -88,6 +89,20 @@ async def run(
     )
 
     state = StateStore()
+    history_store: HistoryStore | None = None
+    if config.history.enabled:
+        db_path = resolve_history_path(config.history.path, config_path)
+        history_store = HistoryStore(config.history, db_path)
+        await history_store.open()
+        await history_store.prune()
+        logger.info("История баланса: %s", db_path)
+        logger.debug(
+            "History config: retention_days=%s max_size_mb=%s record_errors=%s",
+            config.history.retention_days,
+            config.history.max_size_mb,
+            config.history.record_errors,
+        )
+
     # Увеличенный таймаут снижает ложные обрывы long polling в Docker/WSL
     bot = Bot(
         token=config.bot_token,
@@ -101,7 +116,7 @@ async def run(
         )
         await notify_users(bot, config.allowed_user_ids, text)
 
-    scheduler = Scheduler(state, on_notify)
+    scheduler = Scheduler(state, on_notify, history=history_store)
     for service in config.services:
         plugin = create_plugin(service)
         scheduler.add_poller(service, plugin)
@@ -130,6 +145,8 @@ async def run(
     finally:
         logger.debug("Остановка планировщика и закрытие bot session")
         await scheduler.stop_all()
+        if history_store is not None:
+            await history_store.close()
         await bot.session.close()
 
 
