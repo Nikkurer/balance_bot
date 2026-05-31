@@ -102,7 +102,7 @@ class AuthMiddleware(BaseMiddleware):
             user_id = event.from_user.id if event.from_user else None
             if user_id not in self.allowed_user_ids:
                 logger.debug("AuthMiddleware: deny user_id=%s", user_id)
-                await event.answer("Доступ запрещён.")
+                await event.answer("Нет доступа.")
                 return None
             logger.debug("AuthMiddleware: allow user_id=%s", user_id)
         return await handler(event, data)
@@ -136,10 +136,9 @@ def create_dispatcher(
             logger.warning("Не удалось обновить меню команд: %s", exc)
 
         await message.answer(
-            "Бот отслеживает баланс и срок подписки на подключённых сервисах.\n\n"
-            "Команды:\n"
-            "/status — состояние всех сервисов\n"
-            "/refresh — принудительный опрос"
+            "Мониторинг баланса и подписок.\n\n"
+            "/status — статус\n"
+            "/refresh — опрос"
         )
 
     @dp.message(Command("status"))
@@ -147,7 +146,7 @@ def create_dispatcher(
         logger.debug("Команда /status: chat_id=%s", message.chat.id)
         statuses = state.all_statuses()
         if not statuses:
-            await message.answer("Данных пока нет. Дождитесь первого опроса или /refresh.")
+            await message.answer("Нет данных. /refresh")
             return
 
         parts = [format_status_message(name, st) for name, st in sorted(statuses.items())]
@@ -160,14 +159,14 @@ def create_dispatcher(
         if on_refresh is None:
             await message.answer("Опрос недоступен.")
             return
-        await message.answer("Опрашиваю сервисы…")
+        await message.answer("Опрос…")
         await on_refresh()
         await cmd_status(message)
 
     @dp.message(F.text)
     async def unknown(message: Message) -> None:
         logger.debug("Неизвестная команда/текст: chat_id=%s text=%r", message.chat.id, message.text)
-        await message.answer("Неизвестная команда. Используйте /status или /refresh.")
+        await message.answer("/status · /refresh")
 
     return dp
 

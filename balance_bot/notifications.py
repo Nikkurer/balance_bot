@@ -53,6 +53,12 @@ def evaluate_alerts(service: ServiceConfig, status: ServiceStatus) -> set[str]:
     return alerts
 
 
+def _format_dt(dt: datetime) -> str:
+    """Компактная дата/время в timezone бота."""
+    local = to_bot_timezone(dt)
+    return local.strftime("%d.%m.%Y %H:%M %Z")
+
+
 def format_status_message(service_name: str, status: ServiceStatus) -> str:
     """Форматирует блок статуса одного сервиса для команды ``/status``.
 
@@ -66,23 +72,25 @@ def format_status_message(service_name: str, status: ServiceStatus) -> str:
     lines = [f"<b>{service_name}</b>"]
 
     if status.error:
-        lines.append(f"❌ Ошибка: {status.error}")
+        lines.append(f"❌ {status.error}")
         return "\n".join(lines)
 
+    parts: list[str] = []
     if status.balance is not None:
         currency = status.currency or ""
-        lines.append(f"💰 Баланс: {status.balance:g} {currency}".strip())
+        parts.append(f"💰 {status.balance:g} {currency}".strip())
 
     subscription_display = status.details.get("subscription_end_display")
     if subscription_display is not None:
-        lines.append(f"📅 Подписка до: {subscription_display}")
+        parts.append(f"📅 {subscription_display}")
     elif status.subscription_end is not None:
-        end = to_bot_timezone(status.subscription_end)
-        lines.append(f"📅 Подписка до: {end.strftime('%Y-%m-%d %H:%M %Z')}")
+        parts.append(f"📅 {_format_dt(status.subscription_end)}")
+
+    if parts:
+        lines.append(" · ".join(parts))
 
     if status.last_updated:
-        updated = to_bot_timezone(status.last_updated)
-        lines.append(f"🕐 Обновлено: {updated.strftime('%Y-%m-%d %H:%M %Z')}")
+        lines.append(f"🕐 {_format_dt(status.last_updated)}")
 
     return "\n".join(lines)
 
@@ -100,14 +108,12 @@ def format_alert_message(service_name: str, alert: str, status: ServiceStatus) -
     """
     if alert == "low_balance":
         currency = status.currency or ""
-        return (
-            f"⚠️ <b>{service_name}</b>: низкий баланс — "
-            f"{status.balance:g} {currency}".strip()
-        )
+        amount = f"{status.balance:g} {currency}".strip()
+        return f"⚠️ <b>{service_name}</b> · баланс {amount}"
     if alert == "subscription_ending":
         end = status.subscription_end
-        end_str = to_bot_timezone(end).strftime("%Y-%m-%d %H:%M %Z") if end else "неизвестно"
-        return f"⚠️ <b>{service_name}</b>: подписка заканчивается {end_str}"
+        end_str = _format_dt(end) if end else "?"
+        return f"⚠️ <b>{service_name}</b> · подписка до {end_str}"
     if alert == "error":
-        return f"❌ <b>{service_name}</b>: ошибка опроса — {status.error}"
-    return f"⚠️ <b>{service_name}</b>: {alert}"
+        return f"❌ <b>{service_name}</b> · {status.error}"
+    return f"⚠️ <b>{service_name}</b> · {alert}"

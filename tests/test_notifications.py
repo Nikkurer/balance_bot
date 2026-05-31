@@ -103,7 +103,7 @@ class TestFormatMessages:
         text = format_status_message("my-vps", status)
         assert "42.5" in text
         assert "RUB" in text
-        assert "2026-06-01 03:00" in text
+        assert "01.06.2026 03:00" in text
         assert "MSK" in text
 
     def test_format_status_subscription_end_display(self) -> None:
@@ -114,14 +114,14 @@ class TestFormatMessages:
         )
         text = format_status_message("cloud-main", status)
         assert "5.63" in text
-        assert "Подписка до: --" in text
+        assert "📅 --" in text
 
     @pytest.mark.parametrize(
         ("alert", "fragment"),
         [
-            ("low_balance", "низкий баланс"),
-            ("subscription_ending", "подписка заканчивается"),
-            ("error", "ошибка опроса"),
+            ("low_balance", "баланс"),
+            ("subscription_ending", "подписка до"),
+            ("error", "fail"),
         ],
     )
     def test_format_alert_known_types(self, alert: str, fragment: str) -> None:
@@ -143,4 +143,4 @@ class TestFormatMessages:
         set_bot_timezone("Europe/Moscow")
         status = ServiceStatus(subscription_end=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc))
         text = format_alert_message("svc", "subscription_ending", status)
-        assert "2026-01-01 03:00" in text
+        assert "01.01.2026 03:00" in text
