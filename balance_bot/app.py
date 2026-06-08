@@ -92,10 +92,10 @@ async def run(
     history_store: HistoryStore | None = None
     if config.history.enabled:
         db_path = resolve_history_path(config.history.path, config_path)
+        logger.debug("Хранение истории баланса включено: %s", db_path)
         history_store = HistoryStore(config.history, db_path)
         await history_store.open()
         await history_store.prune()
-        logger.info("История баланса: %s", db_path)
         logger.debug(
             "History config: retention_days=%s max_size_mb=%s record_errors=%s",
             config.history.retention_days,

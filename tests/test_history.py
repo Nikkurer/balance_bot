@@ -45,6 +45,36 @@ def test_batch_size_one_percent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_open_logs_new_file(caplog, history_db: Path) -> None:
+    config = HistoryConfig(enabled=True, path=str(history_db), retention_days=7, max_size_mb=1)
+    store = HistoryStore(config, history_db)
+
+    with caplog.at_level("DEBUG", logger="balance_bot.history"):
+        await store.open()
+        await store.close()
+
+    path_str = str(history_db)
+    assert f"Используется файл {path_str}" in caplog.text
+    assert "Создан новый файл" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_open_logs_existing_file(caplog, history_db: Path) -> None:
+    config = HistoryConfig(enabled=True, path=str(history_db), retention_days=7, max_size_mb=1)
+    store = HistoryStore(config, history_db)
+    await store.open()
+    await store.close()
+
+    with caplog.at_level("DEBUG", logger="balance_bot.history"):
+        await store.open()
+        await store.close()
+
+    path_str = str(history_db)
+    assert f"Используется файл {path_str}" in caplog.text
+    assert "Файл был найден и используется" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_record_successful_poll(history_store: HistoryStore) -> None:
     ts = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
     status = ServiceStatus(

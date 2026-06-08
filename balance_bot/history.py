@@ -137,13 +137,19 @@ class HistoryStore:
 
     def _open_sync(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        existed = self._db_path.is_file()
+        path_str = str(self._db_path)
+        logger.info("Используется файл %s", path_str)
+        if existed:
+            logger.debug("Файл был найден и используется")
+        else:
+            logger.debug("Создан новый файл")
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute("PRAGMA synchronous = NORMAL")
         self._conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
         self._conn.executescript(_SCHEMA_SQL)
         self._conn.commit()
-        logger.debug("HistoryStore: opened %s", self._db_path)
 
     def _close_sync(self) -> None:
         if self._conn is not None:
