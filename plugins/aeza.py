@@ -231,6 +231,14 @@ class Plugin(ServicePlugin):
                 if request_id:
                     suffix_parts.append(f"requestId={request_id}")
                 suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
+                logger.error(
+                    "Aeza: HTTP %s GET %s — %s%s (service=%s)",
+                    resp.status,
+                    url,
+                    msg,
+                    suffix,
+                    self.service.name,
+                )
                 raise AezaApiError(f"{url}: HTTP {resp.status} — {msg}{suffix}")
 
             try:

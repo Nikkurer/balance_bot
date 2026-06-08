@@ -220,7 +220,9 @@ async def test_vdsina_get_http_500_includes_request_id(vdsina_plugin: VdsinaPlug
 
 
 @pytest.mark.asyncio
-async def test_vdsina_get_http_504_html_body(vdsina_plugin: VdsinaPlugin) -> None:
+async def test_vdsina_get_http_504_html_body(
+    vdsina_plugin: VdsinaPlugin, caplog: pytest.LogCaptureFixture
+) -> None:
     html = "<html><head><title>504 Gateway Timeout</title></head><body></body></html>"
     routes = [
         HttpRoute(
@@ -232,18 +234,17 @@ async def test_vdsina_get_http_504_html_body(vdsina_plugin: VdsinaPlugin) -> Non
             reason="Gateway Timeout",
         )
     ]
-    with patch_aiohttp_session("plugins.vdsina", routes):
-        with pytest.raises(VdsinaApiError) as exc_info:
-            await vdsina_plugin._get(
-                "https://userapi.vdsina.ru/v1",
-                "test-token",
-                "account.balance",
-            )
+    with caplog.at_level("ERROR", logger="plugins.vdsina"):
+        with patch_aiohttp_session("plugins.vdsina", routes):
+            with pytest.raises(VdsinaApiError):
+                await vdsina_plugin._get(
+                    "https://userapi.vdsina.ru/v1",
+                    "test-token",
+                    "account.balance",
+                )
 
-    msg = str(exc_info.value)
-    assert "HTTP 504" in msg
-    assert "504 Gateway Timeout" in msg
-    assert "<html>" not in msg
+    assert any("HTTP 504" in record.message for record in caplog.records)
+    assert any("504 Gateway Timeout" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio

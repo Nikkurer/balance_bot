@@ -155,6 +155,14 @@ class Plugin(ServicePlugin):
                     pass
                 request_id = resp.headers.get("x-request-id")
                 suffix = f" (requestId={request_id})" if request_id else ""
+                logger.error(
+                    "VDSina: HTTP %s GET %s — %s%s (service=%s)",
+                    resp.status,
+                    url,
+                    msg,
+                    suffix,
+                    self.service.name,
+                )
                 raise VdsinaApiError(f"{url}: HTTP {resp.status} — {msg}{suffix}")
 
             try:
