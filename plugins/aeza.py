@@ -1,10 +1,12 @@
 """Плагин Aeza (aeza.ru / aeza.net): баланс и дата окончания средств."""
 
+import json
 import logging
 from datetime import date, datetime, timezone
 
 import aiohttp
 
+from balance_bot.http_errors import format_http_error_body
 from balance_bot.models import ServiceStatus
 from balance_bot.plugins.base import ServicePlugin
 
@@ -206,18 +208,23 @@ class Plugin(ServicePlugin):
         )
         async with self._http.get(url, headers=headers, params=params) as resp:
             logger.debug("Aeza: GET %s -> HTTP %s", url, resp.status)
-            try:
-                payload = await resp.json(content_type=None)
-            except Exception as exc:
-                text = await resp.text()
-                raise AezaApiError(
-                    f"{url}: ответ не JSON (HTTP {resp.status}): {text[:200]}"
-                ) from exc
-
             if resp.status >= 400:
-                msg = _api_message(payload) or resp.reason
-                trace_id = _extract_trace_id(payload) or resp.headers.get("x-trace-id")
+                text = await resp.text()
+                msg = format_http_error_body(
+                    resp.status,
+                    text,
+                    content_type=resp.headers.get("Content-Type"),
+                    reason=resp.reason,
+                )
+                trace_id = resp.headers.get("x-trace-id")
                 request_id = resp.headers.get("x-request-id")
+                try:
+                    payload = json.loads(text)
+                    if isinstance(payload, dict):
+                        msg = _api_message(payload) or msg
+                        trace_id = _extract_trace_id(payload) or trace_id
+                except json.JSONDecodeError:
+                    pass
                 suffix_parts = []
                 if trace_id:
                     suffix_parts.append(f"traceId={trace_id}")
@@ -225,6 +232,13 @@ class Plugin(ServicePlugin):
                     suffix_parts.append(f"requestId={request_id}")
                 suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
                 raise AezaApiError(f"{url}: HTTP {resp.status} — {msg}{suffix}")
+
+            try:
+                payload = await resp.json(content_type=None)
+            except Exception as exc:
+                raise AezaApiError(
+                    f"{url}: ответ не JSON (HTTP {resp.status})"
+                ) from exc
 
             if not isinstance(payload, dict):
                 raise AezaApiError(f"{url}: неожиданный формат ответа")

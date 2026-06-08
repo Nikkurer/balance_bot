@@ -106,14 +106,16 @@ def format_alert_message(service_name: str, alert: str, status: ServiceStatus) -
     Returns:
         HTML-текст для ``send_message``.
     """
+    name = service_name
     if alert == "low_balance":
         currency = status.currency or ""
         amount = f"{status.balance:g} {currency}".strip()
-        return f"⚠️ <b>{service_name}</b> · баланс {amount}"
+        return f"⚠️ <b>{name}</b> · баланс {amount}"
     if alert == "subscription_ending":
         end = status.subscription_end
         end_str = _format_dt(end) if end else "?"
-        return f"⚠️ <b>{service_name}</b> · подписка до {end_str}"
+        return f"⚠️ <b>{name}</b> · подписка до {end_str}"
     if alert == "error":
-        return f"❌ <b>{service_name}</b> · {status.error}"
-    return f"⚠️ <b>{service_name}</b> · {alert}"
+        error = status.error or ""
+        return f"❌ <b>{name}</b> · {error}"
+    return f"⚠️ <b>{name}</b> · {alert}"

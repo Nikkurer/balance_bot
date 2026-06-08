@@ -1,10 +1,12 @@
 """Плагин VDSina Public API: баланс и прогноз окончания средств (forecast)."""
 
+import json
 import logging
 from datetime import date, datetime, timezone
 
 import aiohttp
 
+from balance_bot.http_errors import format_http_error_body
 from balance_bot.models import ServiceStatus
 from balance_bot.plugins.base import ServicePlugin
 
@@ -137,19 +139,30 @@ class Plugin(ServicePlugin):
         )
         async with self._http.get(url, headers=headers) as resp:
             logger.debug("VDSina: GET %s -> HTTP %s", url, resp.status)
-            try:
-                payload = await resp.json(content_type=None)
-            except Exception as exc:
-                text = await resp.text()
-                raise VdsinaApiError(
-                    f"{url}: ответ не JSON (HTTP {resp.status}): {text[:200]}"
-                ) from exc
-
             if resp.status >= 400:
-                msg = _api_message(payload) or resp.reason
+                text = await resp.text()
+                msg = format_http_error_body(
+                    resp.status,
+                    text,
+                    content_type=resp.headers.get("Content-Type"),
+                    reason=resp.reason,
+                )
+                try:
+                    payload = json.loads(text)
+                    if isinstance(payload, dict):
+                        msg = _api_message(payload) or msg
+                except json.JSONDecodeError:
+                    pass
                 request_id = resp.headers.get("x-request-id")
                 suffix = f" (requestId={request_id})" if request_id else ""
                 raise VdsinaApiError(f"{url}: HTTP {resp.status} — {msg}{suffix}")
+
+            try:
+                payload = await resp.json(content_type=None)
+            except Exception as exc:
+                raise VdsinaApiError(
+                    f"{url}: ответ не JSON (HTTP {resp.status})"
+                ) from exc
 
             if not isinstance(payload, dict):
                 raise VdsinaApiError(f"{url}: неожиданный формат ответа")

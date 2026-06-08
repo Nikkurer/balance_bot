@@ -220,6 +220,33 @@ async def test_vdsina_get_http_500_includes_request_id(vdsina_plugin: VdsinaPlug
 
 
 @pytest.mark.asyncio
+async def test_vdsina_get_http_504_html_body(vdsina_plugin: VdsinaPlugin) -> None:
+    html = "<html><head><title>504 Gateway Timeout</title></head><body></body></html>"
+    routes = [
+        HttpRoute(
+            "GET",
+            VDSINA_RU_BALANCE,
+            504,
+            json_body=html,
+            headers={"Content-Type": "text/html"},
+            reason="Gateway Timeout",
+        )
+    ]
+    with patch_aiohttp_session("plugins.vdsina", routes):
+        with pytest.raises(VdsinaApiError) as exc_info:
+            await vdsina_plugin._get(
+                "https://userapi.vdsina.ru/v1",
+                "test-token",
+                "account.balance",
+            )
+
+    msg = str(exc_info.value)
+    assert "HTTP 504" in msg
+    assert "504 Gateway Timeout" in msg
+    assert "<html>" not in msg
+
+
+@pytest.mark.asyncio
 async def test_vdsina_fetch_status_success(vdsina_plugin: VdsinaPlugin) -> None:
     routes = [
         HttpRoute(
