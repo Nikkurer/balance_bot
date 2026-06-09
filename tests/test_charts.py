@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 
 from balance_bot.charts import (
-    downsample_points,
+    aggregate_points_for_chart,
     parse_chart_command_args,
     parse_period_callback,
     parse_service_callback,
@@ -41,19 +41,36 @@ def test_period_since_all_is_none() -> None:
     assert period_since("7d") is not None
 
 
-def test_downsample_collapses_to_daily() -> None:
+def test_aggregate_keeps_raw_points_when_below_limit() -> None:
     base = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     points = [
-        BalancePoint(
-            ts=base + timedelta(minutes=i),
-            balance=float(i),
-            currency="RUB",
-        )
-        for i in range(250)
+        BalancePoint(ts=base, balance=10.0, currency="RUB"),
+        BalancePoint(ts=base + timedelta(hours=6), balance=20.0, currency="RUB"),
     ]
-    result = downsample_points(points)
-    assert len(result) == 1
-    assert result[0].balance == 249.0
+    result = aggregate_points_for_chart(points, max_points_per_day=4)
+    assert result == points
+
+
+def test_aggregate_averages_when_above_limit() -> None:
+    base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+    points = [
+        BalancePoint(ts=base + timedelta(hours=i), balance=float(i), currency="RUB")
+        for i in range(24)
+    ]
+    result = aggregate_points_for_chart(points, max_points_per_day=4)
+    assert len(result) == 4
+    assert result[0].balance == 2.5  # avg of 0,1,2,3,4,5
+    assert result[-1].balance == 20.5  # avg of 18..23
+
+
+def test_aggregate_disabled_when_zero() -> None:
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    points = [
+        BalancePoint(ts=base + timedelta(minutes=i), balance=float(i), currency="RUB")
+        for i in range(50)
+    ]
+    result = aggregate_points_for_chart(points, max_points_per_day=0)
+    assert len(result) == 50
 
 
 def test_render_chart_sync_produces_png() -> None:
@@ -71,7 +88,13 @@ def test_render_chart_sync_produces_png() -> None:
             currency="RUB",
         ),
     ]
-    png, caption = _render_chart_sync("svc", points, period="7d", poll_errors=2)
+    png, caption = _render_chart_sync(
+        "svc",
+        points,
+        period="7d",
+        poll_errors=2,
+        chart_points_per_day=0,
+    )
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
     assert "svc" in caption
     assert "Сбоев опроса: 2" in caption

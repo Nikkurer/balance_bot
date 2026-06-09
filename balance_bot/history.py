@@ -126,6 +126,11 @@ class HistoryStore:
         """Путь к файлу SQLite."""
         return self._db_path
 
+    @property
+    def chart_points_per_day(self) -> int:
+        """Лимит точек на графике за сутки (``0`` — без усреднения)."""
+        return self._config.chart_points_per_day
+
     async def open(self) -> None:
         """Создаёт каталог, схему и открывает соединение."""
         await asyncio.to_thread(self._open_sync)

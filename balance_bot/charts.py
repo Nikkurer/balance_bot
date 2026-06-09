@@ -37,8 +37,6 @@ PERIOD_LABELS: dict[str, str] = {
     "all": "всё",
 }
 
-MAX_CHART_POINTS = 200
-
 
 def parse_chart_command_args(text: str | None) -> tuple[str | None, str | None]:
     """Разбирает аргументы ``/chart [service] [period]``.
@@ -127,17 +125,62 @@ def parse_period_callback(data: str) -> tuple[str, str] | None:
     return service, period
 
 
-def downsample_points(points: list[BalancePoint]) -> list[BalancePoint]:
-    """Сжимает ряд до одной точки на день при переполнении лимита."""
-    if len(points) <= MAX_CHART_POINTS:
+def aggregate_points_for_chart(
+    points: list[BalancePoint],
+    max_points_per_day: int,
+) -> list[BalancePoint]:
+    """Усредняет точки по суткам, если в БД их больше лимита.
+
+    Если за сутки в БД не больше ``max_points_per_day`` точек — возвращает их
+    как есть. При ``max_points_per_day <= 0`` возвращает все точки без изменений.
+
+    Args:
+        points: Исходный ряд (по возрастанию ``ts``).
+        max_points_per_day: Целевое число точек на графике за сутки.
+
+    Returns:
+        Ряд для отрисовки.
+    """
+    if max_points_per_day <= 0 or not points:
         return points
 
-    by_day: dict[str, BalancePoint] = {}
+    by_day: dict[str, list[BalancePoint]] = {}
     for point in points:
-        local = to_bot_timezone(point.ts)
-        key = local.strftime("%Y-%m-%d")
-        by_day[key] = point
-    return sorted(by_day.values(), key=lambda p: p.ts)
+        day_key = to_bot_timezone(point.ts).strftime("%Y-%m-%d")
+        by_day.setdefault(day_key, []).append(point)
+
+    result: list[BalancePoint] = []
+    for day_key in sorted(by_day):
+        day_points = sorted(by_day[day_key], key=lambda p: p.ts)
+        if len(day_points) <= max_points_per_day:
+            result.extend(day_points)
+        else:
+            result.extend(_average_day_points(day_points, max_points_per_day))
+    return result
+
+
+def _average_day_points(
+    day_points: list[BalancePoint],
+    buckets: int,
+) -> list[BalancePoint]:
+    """Делит сутки на ``buckets`` интервалов и усредняет баланс в каждом."""
+    total = len(day_points)
+    averaged: list[BalancePoint] = []
+    for i in range(buckets):
+        start = i * total // buckets
+        end = (i + 1) * total // buckets
+        chunk = day_points[start:end]
+        if not chunk:
+            continue
+        avg_balance = sum(p.balance for p in chunk) / len(chunk)
+        averaged.append(
+            BalancePoint(
+                ts=chunk[-1].ts,
+                balance=avg_balance,
+                currency=chunk[-1].currency,
+            )
+        )
+    return averaged
 
 
 def _render_chart_sync(
@@ -146,9 +189,10 @@ def _render_chart_sync(
     *,
     period: str,
     poll_errors: int,
+    chart_points_per_day: int,
 ) -> tuple[bytes, str]:
     """Строит PNG-график (блокирующий вызов)."""
-    display_points = downsample_points(points)
+    display_points = aggregate_points_for_chart(points, chart_points_per_day)
     times = [to_bot_timezone(p.ts) for p in display_points]
     values = [p.balance for p in display_points]
     currency = next((p.currency for p in reversed(display_points) if p.currency), "")
@@ -222,4 +266,5 @@ async def render_balance_chart(
         points,
         period=period,
         poll_errors=poll_errors,
+        chart_points_per_day=history.chart_points_per_day,
     )

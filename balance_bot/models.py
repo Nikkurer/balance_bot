@@ -57,7 +57,9 @@ class HistoryConfig:
         path: Путь к файлу БД (относительно каталога конфига или абсолютный).
         retention_days: Удалять записи старше N дней; ``0`` — не применять.
         max_size_mb: Удалять старые записи, пока файл БД не ≤ N МБ; ``0`` — не применять.
-        record_errors: Записывать строки с ``error`` (баланс ``None``).
+        record_errors: Записывать сбои опроса в ``poll_errors``.
+        chart_points_per_day: Макс. точек на графике за сутки; при большем числе
+            записей в БД — усреднение по интервалам. ``0`` — все точки из БД.
     """
 
     enabled: bool = False
@@ -65,6 +67,7 @@ class HistoryConfig:
     retention_days: int = 0
     max_size_mb: int = 0
     record_errors: bool = False
+    chart_points_per_day: int = 0
 
 
 @dataclass

@@ -147,6 +147,7 @@ def _parse_history(raw) -> HistoryConfig:
     retention_days = _parse_history_int(raw, "retention_days", default=0)
     max_size_mb = _parse_history_int(raw, "max_size_mb", default=0)
     record_errors = bool(raw.get("record_errors", False))
+    chart_points_per_day = _parse_history_int(raw, "chart_points_per_day", default=0)
 
     return HistoryConfig(
         enabled=enabled,
@@ -154,6 +155,7 @@ def _parse_history(raw) -> HistoryConfig:
         retention_days=retention_days,
         max_size_mb=max_size_mb,
         record_errors=record_errors,
+        chart_points_per_day=chart_points_per_day,
     )
 
 

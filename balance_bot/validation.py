@@ -137,4 +137,8 @@ def _validate_history(config: AppConfig) -> list[str]:
             "history: при enabled задайте retention_days > 0 и/или max_size_mb > 0 "
             "(0 — не применять очистку по этому параметру)"
         )
+    if history.chart_points_per_day < 0:
+        errors.append(
+            "history.chart_points_per_day: должен быть >= 0 (0 — все точки из БД)"
+        )
     return errors
