@@ -60,6 +60,8 @@ class HistoryConfig:
         record_errors: Записывать сбои опроса в ``poll_errors``.
         chart_points_per_day: Макс. точек на графике за сутки; при большем числе
             записей в БД — усреднение по интервалам. ``0`` — все точки из БД.
+        chart_max_points: Макс. точек баланса из БД для одного графика; при
+            превышении берутся последние по времени. ``0`` — без лимита.
         prune_interval_hours: Периодический ``prune`` в фоне; ``0`` — только при
             старте и после ``poll_all_now``.
     """
@@ -70,6 +72,7 @@ class HistoryConfig:
     max_size_mb: int = 0
     record_errors: bool = False
     chart_points_per_day: int = 0
+    chart_max_points: int = 10_000
     prune_interval_hours: int = 24
 
 

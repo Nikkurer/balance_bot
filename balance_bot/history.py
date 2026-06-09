@@ -64,6 +64,14 @@ class PruneStats:
     vacuum_pages: int
 
 
+@dataclass(frozen=True)
+class ChartData:
+    """Данные для построения графика баланса."""
+
+    points: list[BalancePoint]
+    error_count: int
+
+
 def resolve_history_path(path: str, config_path: Path) -> Path:
     """Разрешает путь к файлу БД относительно каталога конфига.
 
@@ -200,6 +208,23 @@ class HistoryStore:
             Число строк в ``poll_errors``.
         """
         return await asyncio.to_thread(self._count_poll_errors_sync, service, since)
+
+    async def fetch_chart_data(
+        self,
+        service: str,
+        *,
+        since: datetime | None = None,
+    ) -> ChartData:
+        """Возвращает точки баланса и число сбоев опроса за период (один round-trip).
+
+        Args:
+            service: Имя сервиса.
+            since: Нижняя граница ``ts`` (UTC); ``None`` — весь ряд (с ``chart_max_points``).
+
+        Returns:
+            ``ChartData`` с точками по возрастанию времени и счётчиком ``poll_errors``.
+        """
+        return await asyncio.to_thread(self._fetch_chart_data_sync, service, since)
 
     def _open_sync(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -359,6 +384,59 @@ class HistoryStore:
             params.append(since_iso)
         row = self._conn.execute(query, params).fetchone()
         return int(row[0]) if row else 0
+
+    def _fetch_chart_data_sync(
+        self,
+        service: str,
+        since: datetime | None,
+    ) -> ChartData:
+        if self._conn is None:
+            raise RuntimeError("HistoryStore не открыт")
+
+        error_count = self._count_poll_errors_sync(service, since)
+        points = self._fetch_series_for_chart_sync(service, since)
+        return ChartData(points=points, error_count=error_count)
+
+    def _fetch_series_for_chart_sync(
+        self,
+        service: str,
+        since: datetime | None,
+    ) -> list[BalancePoint]:
+        """Загружает ряд баланса с учётом ``chart_max_points`` (последние по времени)."""
+        since_iso = _format_ts(since) if since is not None else None
+        max_points = self._config.chart_max_points
+
+        if max_points > 0:
+            inner = """
+                SELECT ts, balance, currency
+                FROM balance_history
+                WHERE service = ?
+            """
+            params: list[object] = [service]
+            if since_iso is not None:
+                inner += " AND ts >= ?"
+                params.append(since_iso)
+            inner += " ORDER BY ts DESC LIMIT ?"
+            params.append(max_points)
+            query = f"SELECT ts, balance, currency FROM ({inner}) ORDER BY ts ASC"
+        else:
+            query = """
+                SELECT ts, balance, currency
+                FROM balance_history
+                WHERE service = ?
+            """
+            params = [service]
+            if since_iso is not None:
+                query += " AND ts >= ?"
+                params.append(since_iso)
+            query += " ORDER BY ts ASC"
+
+        assert self._conn is not None
+        rows = self._conn.execute(query, params).fetchall()
+        return [
+            BalancePoint(ts=_parse_ts(row[0]), balance=float(row[1]), currency=row[2])
+            for row in rows
+        ]
 
     def _prune_sync(self) -> PruneStats:
         if self._conn is None:

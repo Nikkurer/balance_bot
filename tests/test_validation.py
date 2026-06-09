@@ -125,6 +125,20 @@ def test_history_enabled_with_max_size_only(make_app_config) -> None:
     )
 
 
+def test_history_chart_max_points_must_be_non_negative(make_app_config) -> None:
+    with pytest.raises(ConfigError, match="chart_max_points"):
+        validate_config(
+            make_app_config(
+                history=HistoryConfig(
+                    enabled=True,
+                    retention_days=30,
+                    max_size_mb=16,
+                    chart_max_points=-1,
+                )
+            )
+        )
+
+
 def test_history_chart_points_per_day_must_be_non_negative(make_app_config) -> None:
     with pytest.raises(ConfigError, match="chart_points_per_day"):
         validate_config(

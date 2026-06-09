@@ -16,6 +16,7 @@ timezone: UTC
 #   max_size_mb: 32
 #   record_errors: false        # сбои — в poll_errors, не в balance_history
 #   chart_points_per_day: 4     # 0 — все точки; иначе усреднение при избытке за сутки
+#   chart_max_points: 10000     # 0 — без лимита; иначе последние N точек для /chart
 #   prune_interval_hours: 24    # 0 — prune только при старте и после /refresh
 
 services:

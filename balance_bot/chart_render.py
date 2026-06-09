@@ -76,23 +76,22 @@ async def render_balance_chart(
 ) -> tuple[bytes, str] | None:
     """Загружает историю и строит PNG."""
     since = period_since(period)
-    points = await history.fetch_series(service, since=since)
-    if not points:
+    chart_data = await history.fetch_chart_data(service, since=since)
+    if not chart_data.points:
         return None
 
-    poll_errors = await history.count_poll_errors(service, since=since)
     logger.debug(
         "render_balance_chart: service=%s period=%s points=%d errors=%d",
         service,
         period,
-        len(points),
-        poll_errors,
+        len(chart_data.points),
+        chart_data.error_count,
     )
     return await asyncio.to_thread(
         render_chart_sync,
         service,
-        points,
+        chart_data.points,
         period=period,
-        poll_errors=poll_errors,
+        poll_errors=chart_data.error_count,
         chart_points_per_day=history.chart_points_per_day,
     )

@@ -297,6 +297,70 @@ async def test_fetch_series_returns_points_in_order(history_store: HistoryStore)
 
 
 @pytest.mark.asyncio
+async def test_fetch_chart_data_combines_points_and_errors(history_db: Path) -> None:
+    config = HistoryConfig(
+        enabled=True,
+        path=str(history_db),
+        retention_days=7,
+        max_size_mb=0,
+        record_errors=True,
+        chart_max_points=0,
+    )
+    store = HistoryStore(config, history_db)
+    await store.open()
+    ts1 = datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc)
+    ts2 = datetime(2026, 5, 2, 10, 0, tzinfo=timezone.utc)
+    await store.record(
+        "svc",
+        "mock",
+        ServiceStatus(balance=10.0, currency="RUB", last_updated=ts1),
+    )
+    await store.record(
+        "svc",
+        "mock",
+        ServiceStatus(balance=20.0, currency="RUB", last_updated=ts2),
+    )
+    await store.record("svc", "mock", ServiceStatus(error="timeout", last_updated=ts2))
+
+    data = await store.fetch_chart_data(
+        "svc", since=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+    )
+    await store.close()
+
+    assert len(data.points) == 1
+    assert data.points[0].balance == 20.0
+    assert data.error_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_chart_data_respects_chart_max_points(history_db: Path) -> None:
+    config = HistoryConfig(
+        enabled=True,
+        path=str(history_db),
+        retention_days=7,
+        max_size_mb=0,
+        chart_max_points=2,
+    )
+    store = HistoryStore(config, history_db)
+    await store.open()
+    for i in range(5):
+        await store.record(
+            "svc",
+            "mock",
+            ServiceStatus(
+                balance=float(i),
+                last_updated=datetime(2026, 5, 1, i, 0, tzinfo=timezone.utc),
+            ),
+        )
+
+    data = await store.fetch_chart_data("svc")
+    await store.close()
+
+    assert len(data.points) == 2
+    assert [p.balance for p in data.points] == [3.0, 4.0]
+
+
+@pytest.mark.asyncio
 async def test_count_poll_errors(history_db: Path) -> None:
     config = HistoryConfig(
         enabled=True,

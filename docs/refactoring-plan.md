@@ -162,7 +162,9 @@
 
 ---
 
-## Этап 5 — HistoryStore и конфиг (низкий приоритет)
+## Этап 5 — HistoryStore и конфиг (низкий приоритет) ✅
+
+*Реализовано: `fetch_chart_data()` (один round-trip); `chart_max_points` (по умолчанию 10 000). Разделение классов (5.3) не делалось.*
 
 Проблема: `HistoryStore` — god-class; `fetch_series` + `count_poll_errors` — два round-trip; `period=all` без лимита.
 

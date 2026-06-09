@@ -148,6 +148,7 @@ def _parse_history(raw) -> HistoryConfig:
     max_size_mb = _parse_history_int(raw, "max_size_mb", default=0)
     record_errors = bool(raw.get("record_errors", False))
     chart_points_per_day = _parse_history_int(raw, "chart_points_per_day", default=0)
+    chart_max_points = _parse_history_int(raw, "chart_max_points", default=10_000)
     prune_interval_hours = _parse_history_int(raw, "prune_interval_hours", default=24)
 
     return HistoryConfig(
@@ -157,6 +158,7 @@ def _parse_history(raw) -> HistoryConfig:
         max_size_mb=max_size_mb,
         record_errors=record_errors,
         chart_points_per_day=chart_points_per_day,
+        chart_max_points=chart_max_points,
         prune_interval_hours=prune_interval_hours,
     )
 
