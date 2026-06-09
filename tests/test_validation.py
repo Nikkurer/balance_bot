@@ -76,6 +76,16 @@ def test_empty_plugin_raises(make_app_config) -> None:
         validate_config(make_app_config(services=[bad]))
 
 
+def test_service_name_too_long_raises(make_app_config) -> None:
+    bad = ServiceConfig(
+        name="x" * 65,
+        plugin="mock",
+        poll_interval_seconds=60,
+    )
+    with pytest.raises(ConfigError, match="длина не более 64"):
+        validate_config(make_app_config(services=[bad]))
+
+
 def test_non_positive_poll_interval_raises(make_app_config) -> None:
     bad = ServiceConfig(
         name="x",

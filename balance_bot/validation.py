@@ -11,6 +11,8 @@ class ConfigError(Exception):
 
 
 _TOKEN_RE = re.compile(r"^\d+:[A-Za-z0-9_-]+$")
+# Лимит Telegram для текста inline-кнопки (символы)
+_MAX_SERVICE_NAME_LEN = 64
 _PLACEHOLDER_TOKENS = frozenset(
     {
         "",
@@ -102,6 +104,11 @@ def _validate_service(
         errors.append(f'{prefix}.name: дубликат "{name}"')
     else:
         seen_names.add(name)
+        if len(name) > _MAX_SERVICE_NAME_LEN:
+            errors.append(
+                f'{prefix}.name: длина не более {_MAX_SERVICE_NAME_LEN} символов '
+                f'(лимит Telegram для кнопок /chart)'
+            )
 
     if not (service.plugin or "").strip():
         errors.append(f"{prefix}.plugin: обязателен")

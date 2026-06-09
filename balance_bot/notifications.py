@@ -1,5 +1,6 @@
 """Оценка алертов и форматирование сообщений для Telegram (HTML)."""
 
+import html
 from datetime import datetime, timedelta, timezone
 
 from balance_bot.models import ServiceConfig, ServiceStatus
@@ -53,6 +54,11 @@ def evaluate_alerts(service: ServiceConfig, status: ServiceStatus) -> set[str]:
     return alerts
 
 
+def escape_html(text: str) -> str:
+    """Экранирует текст для ``ParseMode.HTML``."""
+    return html.escape(text, quote=False)
+
+
 def _format_dt(dt: datetime) -> str:
     """Компактная дата/время в timezone бота."""
     local = to_bot_timezone(dt)
@@ -69,10 +75,11 @@ def format_status_message(service_name: str, status: ServiceStatus) -> str:
     Returns:
         HTML-текст (жирное имя, эмодзи-метки).
     """
-    lines = [f"<b>{service_name}</b>"]
+    name = escape_html(service_name)
+    lines = [f"<b>{name}</b>"]
 
     if status.error:
-        lines.append(f"❌ {status.error}")
+        lines.append(f"❌ {escape_html(status.error)}")
         return "\n".join(lines)
 
     parts: list[str] = []
@@ -106,7 +113,7 @@ def format_alert_message(service_name: str, alert: str, status: ServiceStatus) -
     Returns:
         HTML-текст для ``send_message``.
     """
-    name = service_name
+    name = escape_html(service_name)
     if alert == "low_balance":
         currency = status.currency or ""
         amount = f"{status.balance:g} {currency}".strip()
@@ -116,6 +123,6 @@ def format_alert_message(service_name: str, alert: str, status: ServiceStatus) -
         end_str = _format_dt(end) if end else "?"
         return f"⚠️ <b>{name}</b> · подписка до {end_str}"
     if alert == "error":
-        error = status.error or ""
+        error = escape_html(status.error or "")
         return f"❌ <b>{name}</b> · {error}"
-    return f"⚠️ <b>{name}</b> · {alert}"
+    return f"⚠️ <b>{name}</b> · {escape_html(alert)}"

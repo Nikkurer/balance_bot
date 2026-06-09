@@ -26,11 +26,12 @@ from balance_bot.charts import (
     parse_service_callback,
     period_keyboard,
     render_balance_chart,
+    resolve_service_name,
     service_keyboard,
 )
 from balance_bot.history import HistoryStore
 from balance_bot.models import AppConfig
-from balance_bot.notifications import format_status_message
+from balance_bot.notifications import escape_html, format_status_message
 from balance_bot.state import StateStore
 
 logger = logging.getLogger(__name__)
@@ -248,9 +249,10 @@ def create_dispatcher(
             )
             return
         if period is None:
+            service_index = service_list.index(service)
             await message.answer(
-                f"Период для <b>{service}</b>:",
-                reply_markup=period_keyboard(service),
+                f"Период для <b>{escape_html(service)}</b>:",
+                reply_markup=period_keyboard(service_index),
                 parse_mode=ParseMode.HTML,
             )
             return
@@ -258,16 +260,21 @@ def create_dispatcher(
 
     @dp.callback_query(F.data.startswith("chart:s:"))
     async def on_chart_service(callback: CallbackQuery) -> None:
-        service = parse_service_callback(callback.data or "")
-        if not service or service not in service_names:
+        service_index = parse_service_callback(callback.data or "")
+        service = (
+            resolve_service_name(service_list, service_index)
+            if service_index is not None
+            else None
+        )
+        if service is None:
             await callback.answer("Неизвестный сервис", show_alert=True)
             return
         await callback.answer()
         if callback.message is None:
             return
         await callback.message.edit_text(
-            f"Период для <b>{service}</b>:",
-            reply_markup=period_keyboard(service),
+            f"Период для <b>{escape_html(service)}</b>:",
+            reply_markup=period_keyboard(service_index),
             parse_mode=ParseMode.HTML,
         )
 
@@ -280,8 +287,9 @@ def create_dispatcher(
         if parsed is None:
             await callback.answer("Некорректный запрос", show_alert=True)
             return
-        service, period = parsed
-        if service not in service_names:
+        service_index, period = parsed
+        service = resolve_service_name(service_list, service_index)
+        if service is None:
             await callback.answer("Неизвестный сервис", show_alert=True)
             return
 

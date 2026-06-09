@@ -92,6 +92,21 @@ class TestFormatMessages:
         assert "timeout" in text
         assert "❌" in text
 
+    def test_format_status_escapes_html_in_name_and_error(self) -> None:
+        text = format_status_message(
+            "a<b",
+            ServiceStatus(error="<b>fail</b>"),
+        )
+        assert "<b>a&lt;b</b>" in text
+        assert "❌ &lt;b&gt;fail&lt;/b&gt;" in text
+        assert "<b>fail</b>" not in text
+
+    def test_format_alert_escapes_html_in_error(self) -> None:
+        status = ServiceStatus(error="<html>timeout</html>")
+        text = format_alert_message("svc", "error", status)
+        assert "&lt;html&gt;" in text
+        assert "<html>" not in text
+
     def test_format_status_with_balance_and_subscription(self) -> None:
         set_bot_timezone("Europe/Moscow")
         status = ServiceStatus(

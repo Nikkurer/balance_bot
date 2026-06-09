@@ -16,12 +16,14 @@ import matplotlib.pyplot as plt
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from balance_bot.history import BalancePoint, HistoryStore
+from balance_bot.notifications import escape_html
 from balance_bot.timezone import get_bot_timezone, to_bot_timezone
 
 logger = logging.getLogger(__name__)
 
 SERVICE_CALLBACK_PREFIX = "chart:s:"
 PERIOD_CALLBACK_PREFIX = "chart:p:"
+TELEGRAM_CALLBACK_DATA_MAX_BYTES = 64
 
 CHART_PERIODS: dict[str, int | None] = {
     "7d": 7,
@@ -74,15 +76,44 @@ def period_since(period: str) -> datetime | None:
     return datetime.now(timezone.utc) - timedelta(days=days)
 
 
+def callback_data_fits(data: str) -> bool:
+    """Проверяет, что ``callback_data`` укладывается в лимит Telegram (64 байта)."""
+    return len(data.encode("utf-8")) <= TELEGRAM_CALLBACK_DATA_MAX_BYTES
+
+
+def service_callback_data(index: int) -> str:
+    """Формирует ``callback_data`` выбора сервиса по индексу."""
+    data = f"{SERVICE_CALLBACK_PREFIX}{index}"
+    if not callback_data_fits(data):
+        raise ValueError(f"callback_data слишком длинный: {data!r}")
+    return data
+
+
+def period_callback_data(service_index: int, period: str) -> str:
+    """Формирует ``callback_data`` выбора периода."""
+    data = f"{PERIOD_CALLBACK_PREFIX}{service_index}:{period}"
+    if not callback_data_fits(data):
+        raise ValueError(f"callback_data слишком длинный: {data!r}")
+    return data
+
+
+def resolve_service_name(service_names: list[str], index: int) -> str | None:
+    """Возвращает имя сервиса по индексу в отсортированном списке."""
+    ordered = sorted(service_names)
+    if index < 0 or index >= len(ordered):
+        return None
+    return ordered[index]
+
+
 def service_keyboard(service_names: list[str]) -> InlineKeyboardMarkup:
-    """Клавиатура выбора сервиса."""
+    """Клавиатура выбора сервиса (индекс в ``callback_data``, имя на кнопке)."""
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
-    for name in sorted(service_names):
+    for index, name in enumerate(sorted(service_names)):
         row.append(
             InlineKeyboardButton(
                 text=name,
-                callback_data=f"{SERVICE_CALLBACK_PREFIX}{name}",
+                callback_data=service_callback_data(index),
             )
         )
         if len(row) == 2:
@@ -93,12 +124,12 @@ def service_keyboard(service_names: list[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def period_keyboard(service: str) -> InlineKeyboardMarkup:
+def period_keyboard(service_index: int) -> InlineKeyboardMarkup:
     """Клавиатура выбора периода для сервиса."""
     buttons = [
         InlineKeyboardButton(
             text=PERIOD_LABELS[key],
-            callback_data=f"{PERIOD_CALLBACK_PREFIX}{service}:{key}",
+            callback_data=period_callback_data(service_index, key),
         )
         for key in ("7d", "30d", "90d", "all")
     ]
@@ -107,22 +138,33 @@ def period_keyboard(service: str) -> InlineKeyboardMarkup:
     )
 
 
-def parse_service_callback(data: str) -> str | None:
-    """Извлекает имя сервиса из ``chart:s:...``."""
+def parse_service_callback(data: str) -> int | None:
+    """Извлекает индекс сервиса из ``chart:s:<index>``."""
     if not data.startswith(SERVICE_CALLBACK_PREFIX):
         return None
-    return data[len(SERVICE_CALLBACK_PREFIX) :]
+    rest = data[len(SERVICE_CALLBACK_PREFIX) :]
+    try:
+        index = int(rest)
+    except ValueError:
+        return None
+    return index if index >= 0 else None
 
 
-def parse_period_callback(data: str) -> tuple[str, str] | None:
-    """Извлекает ``(service, period)`` из ``chart:p:service:period``."""
+def parse_period_callback(data: str) -> tuple[int, str] | None:
+    """Извлекает ``(service_index, period)`` из ``chart:p:<index>:<period>``."""
     if not data.startswith(PERIOD_CALLBACK_PREFIX):
         return None
     rest = data[len(PERIOD_CALLBACK_PREFIX) :]
-    service, _, period = rest.partition(":")
-    if not service or period not in CHART_PERIODS:
+    index_str, _, period = rest.partition(":")
+    if not index_str or period not in CHART_PERIODS:
         return None
-    return service, period
+    try:
+        index = int(index_str)
+    except ValueError:
+        return None
+    if index < 0:
+        return None
+    return index, period
 
 
 def aggregate_points_for_chart(
@@ -218,7 +260,7 @@ def _render_chart_sync(
 
     period_label = PERIOD_LABELS.get(period, period)
     caption_parts = [
-        f"<b>{service}</b>",
+        f"<b>{escape_html(service)}</b>",
         f"Период: {period_label}",
         f"Точек: {len(display_points)}",
     ]

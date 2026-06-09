@@ -4,10 +4,14 @@ from datetime import datetime, timedelta, timezone
 
 from balance_bot.charts import (
     aggregate_points_for_chart,
+    callback_data_fits,
     parse_chart_command_args,
     parse_period_callback,
     parse_service_callback,
+    period_callback_data,
     period_since,
+    resolve_service_name,
+    service_callback_data,
     service_keyboard,
 )
 from balance_bot.history import BalancePoint
@@ -20,18 +24,36 @@ def test_parse_chart_command_args() -> None:
     assert parse_chart_command_args("/chart vdsina-ru bad") == ("vdsina-ru", None)
 
 
-def test_parse_service_callback() -> None:
-    assert parse_service_callback("chart:s:cloud-main") == "cloud-main"
-    assert parse_service_callback("chart:p:x:7d") is None
+def test_parse_service_callback_index() -> None:
+    assert parse_service_callback("chart:s:0") == 0
+    assert parse_service_callback("chart:s:12") == 12
+    assert parse_service_callback("chart:p:0:7d") is None
+    assert parse_service_callback("chart:s:-1") is None
+    assert parse_service_callback("chart:s:x") is None
 
 
-def test_parse_period_callback() -> None:
-    assert parse_period_callback("chart:p:vdsina-ru:30d") == ("vdsina-ru", "30d")
-    assert parse_period_callback("chart:p:vdsina-ru:bad") is None
+def test_parse_period_callback_index() -> None:
+    assert parse_period_callback("chart:p:2:30d") == (2, "30d")
+    assert parse_period_callback("chart:p:0:all") == (0, "all")
+    assert parse_period_callback("chart:p:0:bad") is None
 
 
-def test_service_keyboard_layout() -> None:
+def test_callback_data_within_telegram_limit() -> None:
+    assert callback_data_fits(service_callback_data(0))
+    assert callback_data_fits(period_callback_data(99, "30d"))
+
+
+def test_resolve_service_name() -> None:
+    names = ["b", "a", "c"]
+    assert resolve_service_name(names, 0) == "a"
+    assert resolve_service_name(names, 2) == "c"
+    assert resolve_service_name(names, 5) is None
+
+
+def test_service_keyboard_uses_indices() -> None:
     markup = service_keyboard(["b", "a", "c"])
+    callbacks = [btn.callback_data for row in markup.inline_keyboard for btn in row]
+    assert callbacks == ["chart:s:0", "chart:s:1", "chart:s:2"]
     texts = [btn.text for row in markup.inline_keyboard for btn in row]
     assert texts == ["a", "b", "c"]
 
