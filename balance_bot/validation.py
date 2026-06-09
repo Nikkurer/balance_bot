@@ -141,4 +141,8 @@ def _validate_history(config: AppConfig) -> list[str]:
         errors.append(
             "history.chart_points_per_day: должен быть >= 0 (0 — все точки из БД)"
         )
+    if history.prune_interval_hours < 0:
+        errors.append(
+            "history.prune_interval_hours: должен быть >= 0 (0 — без фонового prune)"
+        )
     return errors

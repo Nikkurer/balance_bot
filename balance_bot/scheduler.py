@@ -49,6 +49,8 @@ class ServicePoller:
         state: StateStore,
         on_notify: NotifyCallback,
         history: HistoryStore | None = None,
+        *,
+        poll_lock: asyncio.Lock | None = None,
     ) -> None:
         """Создаёт poller без запуска фоновой задачи.
 
@@ -58,12 +60,15 @@ class ServicePoller:
             state: Общее хранилище состояния.
             on_notify: Async-колбэк для push-уведомлений (HTML-текст).
             history: Опциональное хранилище истории баланса.
+            poll_lock: Общий lock сервиса (исключает гонку фонового опроса и
+                ``/refresh``).
         """
         self.service = service
         self.plugin = plugin
         self.state = state
         self.on_notify = on_notify
         self.history = history
+        self._poll_lock = poll_lock or asyncio.Lock()
         self._task: asyncio.Task | None = None
 
     async def poll_once(self) -> ServiceStatus:
@@ -75,6 +80,10 @@ class ServicePoller:
         Returns:
             Актуальный ``ServiceStatus`` (в т.ч. с ``error``).
         """
+        async with self._poll_lock:
+            return await self._poll_once_unlocked()
+
+    async def _poll_once_unlocked(self) -> ServiceStatus:
         name = self.service.name
         plugin_name = self.service.plugin
         logger.debug(
@@ -142,7 +151,7 @@ class ServicePoller:
         return status
 
     async def _persist_history(self, name: str, status: ServiceStatus) -> None:
-        """Записывает снимок в историю и применяет retention.
+        """Записывает снимок в историю.
 
         Args:
             name: Имя сервиса.
@@ -151,10 +160,9 @@ class ServicePoller:
         assert self.history is not None
         try:
             await self.history.record(name, self.service.plugin, status)
-            await self.history.prune()
         except Exception as exc:
             logger.info(
-                "История баланса '%s': не удалось записать или очистить — %s",
+                "История баланса '%s': не удалось записать — %s",
                 name,
                 exc,
             )
@@ -164,18 +172,32 @@ class ServicePoller:
                 exc_info=True,
             )
 
-    async def _loop(self) -> None:
+    async def _loop(self, *, delay_first: bool) -> None:
         """Бесконечный цикл: ``poll_once`` → sleep(interval)."""
         interval = self.service.poll_interval_seconds
+        if delay_first:
+            logger.debug(
+                "Цикл poller '%s': начальная задержка %ss",
+                self.service.name,
+                interval,
+            )
+            await asyncio.sleep(interval)
         while True:
             logger.debug("Цикл poller '%s': запуск poll_once()", self.service.name)
             await self.poll_once()
             logger.debug("Цикл poller '%s': sleep %ss", self.service.name, interval)
             await asyncio.sleep(interval)
 
-    def start(self) -> None:
-        """Запускает фоновую задачу ``_loop``."""
-        self._task = asyncio.create_task(self._loop(), name=f"poller-{self.service.name}")
+    def start(self, *, delay_first: bool = False) -> None:
+        """Запускает фоновую задачу ``_loop``.
+
+        Args:
+            delay_first: Если ``True``, первый опрос — после ``poll_interval_seconds``.
+        """
+        self._task = asyncio.create_task(
+            self._loop(delay_first=delay_first),
+            name=f"poller-{self.service.name}",
+        )
         logger.debug("Poller '%s' стартовал: task=%s", self.service.name, self._task.get_name())
 
     async def stop(self) -> None:
@@ -199,6 +221,8 @@ class Scheduler:
         state: StateStore,
         on_notify: NotifyCallback,
         history: HistoryStore | None = None,
+        *,
+        prune_interval_hours: int = 0,
     ) -> None:
         """Создаёт пустой планировщик.
 
@@ -206,11 +230,15 @@ class Scheduler:
             state: Хранилище снимков и алертов.
             on_notify: Колбэк для уведомлений всем разрешённым пользователям.
             history: Опциональное хранилище истории баланса.
+            prune_interval_hours: Интервал фонового ``prune``; ``0`` — не запускать.
         """
         self.state = state
         self.on_notify = on_notify
         self.history = history
+        self._prune_interval_hours = prune_interval_hours
         self._pollers: list[ServicePoller] = []
+        self._poll_locks: dict[str, asyncio.Lock] = {}
+        self._prune_task: asyncio.Task | None = None
 
     def add_poller(self, service: ServiceConfig, plugin: ServicePlugin) -> None:
         """Регистрирует сервис для фонового опроса.
@@ -219,9 +247,15 @@ class Scheduler:
             service: Конфигурация сервиса.
             plugin: Уже созданный экземпляр плагина.
         """
+        poll_lock = self._poll_locks.setdefault(service.name, asyncio.Lock())
         self._pollers.append(
             ServicePoller(
-                service, plugin, self.state, self.on_notify, history=self.history
+                service,
+                plugin,
+                self.state,
+                self.on_notify,
+                history=self.history,
+                poll_lock=poll_lock,
             )
         )
         logger.debug(
@@ -230,14 +264,66 @@ class Scheduler:
             service.plugin,
         )
 
-    def start_all(self) -> None:
-        """Запускает фоновые задачи всех poller'ов."""
-        logger.debug("Scheduler: start_all() count=%d", len(self._pollers))
+    def start_all(self, *, delay_first: bool = False) -> None:
+        """Запускает фоновые задачи всех poller'ов.
+
+        Args:
+            delay_first: Отложить первый опрос каждого poller'а на ``poll_interval``.
+        """
+        logger.debug(
+            "Scheduler: start_all() count=%d delay_first=%s",
+            len(self._pollers),
+            delay_first,
+        )
         for poller in self._pollers:
-            poller.start()
+            poller.start(delay_first=delay_first)
+        self._start_prune_loop()
+
+    def _start_prune_loop(self) -> None:
+        if self.history is None or self._prune_interval_hours <= 0:
+            return
+        if self._prune_task is not None:
+            return
+        self._prune_task = asyncio.create_task(
+            self._prune_loop(),
+            name="history-prune",
+        )
+        logger.debug(
+            "Scheduler: фоновый prune каждые %s ч",
+            self._prune_interval_hours,
+        )
+
+    async def _prune_loop(self) -> None:
+        interval = self._prune_interval_hours * 3600
+        while True:
+            await asyncio.sleep(interval)
+            await self._run_prune("плановый")
+
+    async def _run_prune(self, reason: str) -> None:
+        if self.history is None:
+            return
+        try:
+            stats = await self.history.prune()
+            logger.debug(
+                "Scheduler: prune (%s) deleted=%d vacuum_pages=%d",
+                reason,
+                stats.deleted_rows,
+                stats.vacuum_pages,
+            )
+        except Exception as exc:
+            logger.info("История баланса: prune (%s) не удался — %s", reason, exc)
+            logger.debug("История баланса: prune", exc_info=True)
 
     async def stop_all(self) -> None:
-        """Останавливает все poller'ы параллельно."""
+        """Останавливает фоновый prune и все poller'ы."""
+        if self._prune_task is not None:
+            logger.debug("Scheduler: остановка фонового prune")
+            self._prune_task.cancel()
+            try:
+                await self._prune_task
+            except asyncio.CancelledError:
+                pass
+            self._prune_task = None
         logger.debug("Scheduler: stop_all() count=%d", len(self._pollers))
         await asyncio.gather(*(p.stop() for p in self._pollers))
 
@@ -245,3 +331,4 @@ class Scheduler:
         """Параллельно выполняет ``poll_once`` для каждого сервиса."""
         logger.debug("Scheduler: poll_all_now() count=%d", len(self._pollers))
         await asyncio.gather(*(p.poll_once() for p in self._pollers))
+        await self._run_prune("после poll_all_now")

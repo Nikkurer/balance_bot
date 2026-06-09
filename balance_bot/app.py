@@ -97,10 +97,12 @@ async def run(
         await history_store.open()
         await history_store.prune()
         logger.debug(
-            "History config: retention_days=%s max_size_mb=%s record_errors=%s",
+            "History config: retention_days=%s max_size_mb=%s record_errors=%s "
+            "prune_interval_hours=%s",
             config.history.retention_days,
             config.history.max_size_mb,
             config.history.record_errors,
+            config.history.prune_interval_hours,
         )
 
     # Увеличенный таймаут снижает ложные обрывы long polling в Docker/WSL
@@ -116,7 +118,15 @@ async def run(
         )
         await notify_users(bot, config.allowed_user_ids, text)
 
-    scheduler = Scheduler(state, on_notify, history=history_store)
+    prune_interval = (
+        config.history.prune_interval_hours if config.history.enabled else 0
+    )
+    scheduler = Scheduler(
+        state,
+        on_notify,
+        history=history_store,
+        prune_interval_hours=prune_interval,
+    )
     for service in config.services:
         plugin = create_plugin(service)
         scheduler.add_poller(service, plugin)
@@ -139,10 +149,10 @@ async def run(
     logger.info("Команды бота зарегистрированы в Telegram")
     logger.debug("Команды бота зарегистрированы для текущего scope/языков")
 
-    scheduler.start_all()
-    logger.debug("Фоновые poller'ы запущены")
     await scheduler.poll_all_now()
     logger.debug("Первичный poll_all_now() завершён")
+    scheduler.start_all(delay_first=True)
+    logger.debug("Фоновые poller'ы запущены (первый tick после interval)")
 
     try:
         logger.debug("Запуск Telegram long polling")

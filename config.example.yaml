@@ -16,6 +16,7 @@ timezone: UTC
 #   max_size_mb: 32
 #   record_errors: false        # сбои — в poll_errors, не в balance_history
 #   chart_points_per_day: 4     # 0 — все точки; иначе усреднение при избытке за сутки
+#   prune_interval_hours: 24    # 0 — prune только при старте и после /refresh
 
 services:
   # Документация: docs/plugins/vdsina.md, docs/plugins/aeza.md, docs/plugins/cloud.md, docs/plugins/mock.md
