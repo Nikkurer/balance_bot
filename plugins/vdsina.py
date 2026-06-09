@@ -1,14 +1,18 @@
 """Плагин VDSina Public API: баланс и прогноз окончания средств (forecast)."""
 
-import json
 import logging
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 import aiohttp
 
-from balance_bot.http_errors import format_http_error_body
 from balance_bot.models import ServiceStatus
 from balance_bot.plugins.base import ServicePlugin
+from plugins.http_client import (
+    PluginApiError,
+    PluginHttpClient,
+    parse_datetime,
+    to_float,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +24,7 @@ BASE_URL_COM = "https://userapi.vdsina.com/v1"
 _BALANCE_FIELDS = frozenset({"real", "bonus", "partner", "total"})
 
 
-class VdsinaApiError(Exception):
+class VdsinaApiError(PluginApiError):
     """Ошибка ответа или логики VDSina API."""
 
 
@@ -34,7 +38,11 @@ class Plugin(ServicePlugin):
             service: Конфигурация с ``plugin_config`` (``api_token``, ``site``, …).
         """
         super().__init__(service)
-        self._http: aiohttp.ClientSession | None = None
+        self._client = PluginHttpClient(
+            error_class=VdsinaApiError,
+            log_prefix="VDSina",
+            service_name=service.name,
+        )
 
     async def fetch_status(self) -> ServiceStatus:
         """Запрашивает баланс и дату forecast из VDSina API.
@@ -76,15 +84,15 @@ class Plugin(ServicePlugin):
         account_data = _unwrap(account_payload, "account")
 
         balance = _pick_balance(balance_data, balance_field)
-        subscription_end = _parse_forecast(account_data.get("forecast"))
+        subscription_end = parse_datetime(account_data.get("forecast"))
 
         account = account_data.get("account") or {}
         details = {
             "base_url": base_url,
             "balance_field": balance_field,
-            "real": _to_float(balance_data.get("real")),
-            "bonus": _to_float(balance_data.get("bonus")),
-            "partner": _to_float(balance_data.get("partner")),
+            "real": to_float(balance_data.get("real")),
+            "bonus": to_float(balance_data.get("bonus")),
+            "partner": to_float(balance_data.get("partner")),
             "account_id": account.get("id"),
             "account_name": account.get("name"),
         }
@@ -105,10 +113,8 @@ class Plugin(ServicePlugin):
         )
 
     async def close(self) -> None:
-        """Закрывает ``aiohttp.ClientSession``."""
-        if self._http and not self._http.closed:
-            await self._http.close()
-        self._http = None
+        """Закрывает HTTP-сессию."""
+        await self._client.close()
 
     async def _get(self, base_url: str, token: str, path: str) -> dict:
         """Выполняет GET к VDSina API и проверяет ``status: ok``.
@@ -129,68 +135,29 @@ class Plugin(ServicePlugin):
             "Authorization": f"Bearer {token.strip()}",
             "Accept": "application/json",
         }
-        if self._http is None or self._http.closed:
-            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
-
-        logger.debug(
-            "VDSina: GET %s service=%s",
+        payload = await self._client.request_json(
+            "GET",
             url,
-            self.service.name,
+            headers=headers,
+            message_extractor=_vdsina_api_message,
         )
-        async with self._http.get(url, headers=headers) as resp:
-            logger.debug("VDSina: GET %s -> HTTP %s", url, resp.status)
-            if resp.status >= 400:
-                text = await resp.text()
-                msg = format_http_error_body(
-                    resp.status,
-                    text,
-                    content_type=resp.headers.get("Content-Type"),
-                    reason=resp.reason,
-                )
-                try:
-                    payload = json.loads(text)
-                    if isinstance(payload, dict):
-                        msg = _api_message(payload) or msg
-                except json.JSONDecodeError:
-                    pass
-                request_id = resp.headers.get("x-request-id")
-                suffix = f" (requestId={request_id})" if request_id else ""
-                logger.error(
-                    "VDSina: HTTP %s GET %s — %s%s (service=%s)",
-                    resp.status,
-                    url,
-                    msg,
-                    suffix,
-                    self.service.name,
-                )
-                raise VdsinaApiError(f"{url}: HTTP {resp.status} — {msg}{suffix}")
 
-            try:
-                payload = await resp.json(content_type=None)
-            except Exception as exc:
-                raise VdsinaApiError(
-                    f"{url}: ответ не JSON (HTTP {resp.status})"
-                ) from exc
+        status = payload.get("status")
+        if status and status != "ok":
+            raise VdsinaApiError(f"{url}: {_vdsina_api_message(payload) or status}")
 
-            if not isinstance(payload, dict):
-                raise VdsinaApiError(f"{url}: неожиданный формат ответа")
+        return payload
 
-            status = payload.get("status")
-            if status and status != "ok":
-                raise VdsinaApiError(f"{url}: {_api_message(payload) or status}")
 
-            return payload
+def _vdsina_api_message(payload: dict | None) -> str | None:
+    """Текст ошибки VDSina (``status_msg`` / ``description``)."""
+    if not isinstance(payload, dict):
+        return None
+    return payload.get("status_msg") or payload.get("description")
 
 
 def _resolve_base_url(cfg: dict) -> str:
-    """Возвращает базовый URL API по ``site`` или ``base_url`` в конфиге.
-
-    Args:
-        cfg: ``plugin_config`` сервиса.
-
-    Returns:
-        ``BASE_URL_RU`` или ``BASE_URL_COM``.
-    """
+    """Возвращает базовый URL API по ``site`` или ``base_url`` в конфиге."""
     if raw := cfg.get("base_url"):
         return str(raw).rstrip("/")
 
@@ -201,101 +168,21 @@ def _resolve_base_url(cfg: dict) -> str:
 
 
 def _unwrap(payload: dict, label: str) -> dict:
-    """Извлекает объект ``data`` из обёртки VDSina API.
-
-    Args:
-        payload: Тело ответа API.
-        label: Имя ресурса для сообщения об ошибке.
-
-    Returns:
-        Словарь ``data``.
-
-    Raises:
-        VdsinaApiError: Поле ``data`` отсутствует или не объект.
-    """
+    """Извлекает объект ``data`` из обёртки VDSina API."""
     data = payload.get("data")
     if isinstance(data, dict):
         return data
     raise VdsinaApiError(f"{label}: поле data отсутствует в ответе")
 
 
-def _api_message(payload: dict | None) -> str | None:
-    """Достаёт текст ошибки из JSON ответа VDSina.
-
-    Args:
-        payload: Тело ответа или ``None``.
-
-    Returns:
-        Сообщение или ``None``.
-    """
-    if not isinstance(payload, dict):
-        return None
-    return payload.get("status_msg") or payload.get("description")
-
-
-def _to_float(value) -> float | None:
-    """Безопасно приводит значение к ``float``.
-
-    Args:
-        value: Число или строка из API.
-
-    Returns:
-        Число или ``None`` при ошибке преобразования.
-    """
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _pick_balance(data: dict, field: str) -> float | None:
-    """Выбирает поле баланса (``real``, ``bonus``, ``partner``, ``total``).
-
-    Args:
-        data: Объект ``account.balance`` из API.
-        field: Имя поля из ``plugin_config.balance_field``.
-
-    Returns:
-        Сумма или значение поля.
-    """
+    """Выбирает поле баланса (``real``, ``bonus``, ``partner``, ``total``)."""
     if field == "total":
         parts = [
-            _to_float(data.get("real")),
-            _to_float(data.get("bonus")),
-            _to_float(data.get("partner")),
+            to_float(data.get("real")),
+            to_float(data.get("bonus")),
+            to_float(data.get("partner")),
         ]
         present = [p for p in parts if p is not None]
         return sum(present) if present else None
-    return _to_float(data.get(field))
-
-
-def _parse_forecast(raw) -> datetime | None:
-    """Парсит дату прогноза окончания средств из ответа ``account``.
-
-    Args:
-        raw: Строка ISO, ``date``, ``datetime`` или пустое значение.
-
-    Returns:
-        Дата в UTC или ``None``.
-    """
-    if not raw:
-        return None
-    if isinstance(raw, datetime):
-        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
-    if isinstance(raw, date):
-        return datetime(raw.year, raw.month, raw.day, tzinfo=timezone.utc)
-    text = str(raw).strip()
-    if not text:
-        return None
-    try:
-        if " " in text:
-            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        else:
-            dt = datetime.fromisoformat(text)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
+    return to_float(data.get(field))

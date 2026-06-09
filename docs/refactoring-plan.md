@@ -105,7 +105,9 @@
 
 ---
 
-## Этап 3 — Общий HTTP-слой плагинов (средний приоритет, высокая отдача)
+## Этап 3 — Общий HTTP-слой плагинов (средний приоритет, высокая отдача) ✅
+
+*Реализовано: `plugins/http_client.py` (`PluginHttpClient`, `PluginApiError`, утилиты); миграция vdsina → aeza → cloud; удалён `aeza._unwrap_account`.*
 
 Проблема: `aeza`, `cloud`, `vdsina` дублируют ~200 строк (session, errors, `_to_float`, `_parse_datetime`, trace_id).
 

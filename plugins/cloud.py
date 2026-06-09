@@ -1,16 +1,20 @@
 """Плагин Cloud.ru Evolution: баланс и гранты договора через BFF console API."""
 
-import json
 import logging
 import time
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 import aiohttp
 
-from balance_bot.http_errors import format_http_error_body
 from balance_bot.models import ServiceStatus
 from balance_bot.plugins.base import ServicePlugin
+from plugins.http_client import (
+    PluginApiError,
+    PluginHttpClient,
+    parse_datetime,
+    to_float,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +30,7 @@ GRANT_QUERY_STATUSES = (
 )
 
 
-class CloudApiError(Exception):
+class CloudApiError(PluginApiError):
     """Ошибка IAM, BFF API или разбора ответа Cloud.ru."""
 
 
@@ -34,26 +38,18 @@ class Plugin(ServicePlugin):
     """Опрашивает баланс договора (``agreement_id``) с кэшем IAM-токена."""
 
     def __init__(self, service) -> None:
-        """Создаёт плагин с HTTP-сессией и кэшем токена.
-
-        Args:
-            service: Конфигурация с ``key_id``/``key_secret`` или bearer/api_key.
-        """
+        """Создаёт плагин с HTTP-сессией и кэшем токена."""
         super().__init__(service)
-        self._http: aiohttp.ClientSession | None = None
+        self._client = PluginHttpClient(
+            error_class=CloudApiError,
+            log_prefix="Cloud",
+            service_name=service.name,
+        )
         self._cached_token: str | None = None
         self._token_expires_at: float = 0.0
 
     async def fetch_status(self) -> ServiceStatus:
-        """Получает баланс и дату окончания средств по договору.
-
-        При наличии активного гранта (``BONUS_GRANT_STATUS_READY``) возвращает
-        сумму ``current_amount`` и ближайший ``expire_at``. Иначе — поле
-        ``balance`` из BFF; дата окончания неизвестна (в боте «--»).
-
-        Returns:
-            ``ServiceStatus`` с полями баланса/подписки или ``error``.
-        """
+        """Получает баланс и дату окончания средств по договору."""
         cfg = self.service.plugin_config
         agreement_id = str(cfg.get("agreement_id") or "").strip()
         if not agreement_id:
@@ -114,7 +110,7 @@ class Plugin(ServicePlugin):
                 )
                 return ServiceStatus(error=f"сеть/API: {exc}", last_updated=now)
 
-            balance = _to_float(balance_payload.get("balance"))
+            balance = to_float(balance_payload.get("balance"))
             subscription_end = None
             details["source"] = "balance"
             details["subscription_end_display"] = "--"
@@ -141,22 +137,12 @@ class Plugin(ServicePlugin):
 
     async def close(self) -> None:
         """Закрывает HTTP-сессию и сбрасывает кэш IAM-токена."""
-        if self._http and not self._http.closed:
-            await self._http.close()
-        self._http = None
+        await self._client.close()
+        self._cached_token = None
+        self._token_expires_at = 0.0
 
     async def _resolve_token(self, cfg: dict) -> str:
-        """Возвращает bearer/api_key или получает IAM access_token по key_id/secret.
-
-        Args:
-            cfg: ``plugin_config`` сервиса.
-
-        Returns:
-            Строка токена для заголовка Authorization.
-
-        Raises:
-            CloudApiError: Нет учётных данных или пустой ответ IAM.
-        """
+        """Возвращает bearer/api_key или получает IAM access_token по key_id/secret."""
         auth = _resolve_auth_mode(cfg)
         logger.debug("Cloud _resolve_token: service=%s auth=%s", self.service.name, auth)
         if auth == "bearer":
@@ -216,17 +202,7 @@ class Plugin(ServicePlugin):
     async def _fetch_grants(
         self, base_url: str, token: str, cfg: dict, agreement_id: str
     ) -> dict:
-        """GET списка грантов договора с фильтром по статусам.
-
-        Args:
-            base_url: BFF console API base.
-            token: Токен авторизации.
-            cfg: ``plugin_config``.
-            agreement_id: UUID договора.
-
-        Returns:
-            JSON с полем ``bonus_grants``.
-        """
+        """GET списка грантов договора с фильтром по статусам."""
         auth = _resolve_auth_mode(cfg)
         query = urlencode([("statuses", status) for status in GRANT_QUERY_STATUSES])
         path = f"/v1/agreements/{agreement_id}/grants?{query}"
@@ -235,17 +211,7 @@ class Plugin(ServicePlugin):
     async def _fetch_balance(
         self, base_url: str, token: str, cfg: dict, agreement_id: str
     ) -> dict:
-        """GET баланса договора из BFF v2.
-
-        Args:
-            base_url: BFF console API base.
-            token: Токен авторизации.
-            cfg: ``plugin_config``.
-            agreement_id: UUID договора.
-
-        Returns:
-            JSON с полем ``balance`` (рубли).
-        """
+        """GET баланса договора из BFF v2."""
         auth = _resolve_auth_mode(cfg)
         path = f"/v2/agreements/{agreement_id}/balance"
         return await self._get_json(base_url, path, token, cfg, auth)
@@ -258,18 +224,7 @@ class Plugin(ServicePlugin):
         cfg: dict,
         auth: str,
     ) -> dict:
-        """GET к BFF console API.
-
-        Args:
-            base_url: Базовый URL.
-            path: Относительный путь (может содержать query).
-            token: Токен.
-            cfg: Конфиг (для совместимости сигнатуры).
-            auth: Режим ``key`` / ``bearer`` / ``api_key``.
-
-        Returns:
-            JSON-объект ответа.
-        """
+        """GET к BFF console API."""
         url = path if path.startswith("http") else f"{base_url}/{path.lstrip('/')}"
         return await self._request_json(
             "GET",
@@ -287,97 +242,20 @@ class Plugin(ServicePlugin):
         json_body: dict | None = None,
         auth_header: dict[str, str] | None,
     ) -> dict:
-        """Универсальный HTTP-запрос с разбором JSON (IAM и BFF API).
-
-        Args:
-            method: HTTP-метод.
-            url: Полный URL.
-            cfg: Конфиг (не используется напрямую, для расширений).
-            json_body: Тело POST (IAM token).
-            auth_header: Заголовки авторизации.
-
-        Returns:
-            Распарсенный объект.
-
-        Raises:
-            CloudApiError: HTTP ≥400 или не JSON.
-        """
+        """Универсальный HTTP-запрос с разбором JSON (IAM и BFF API)."""
         headers = {"Accept": "application/json"}
         if auth_header:
             headers.update(auth_header)
-        if json_body is not None:
-            headers["Content-Type"] = "application/json"
-
-        if self._http is None or self._http.closed:
-            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
-
-        logger.debug(
-            "Cloud: %s %s service=%s has_body=%s",
+        return await self._client.request_json(
             method,
             url,
-            self.service.name,
-            json_body is not None,
+            headers=headers,
+            json_body=json_body,
         )
-        async with self._http.request(
-            method, url, headers=headers, json=json_body
-        ) as resp:
-            logger.debug("Cloud: %s %s -> HTTP %s", method, url, resp.status)
-            if resp.status >= 400:
-                text = await resp.text()
-                msg = format_http_error_body(
-                    resp.status,
-                    text,
-                    content_type=resp.headers.get("Content-Type"),
-                    reason=resp.reason,
-                )
-                trace_id = resp.headers.get("x-trace-id")
-                request_id = resp.headers.get("x-request-id")
-                try:
-                    payload = json.loads(text)
-                    if isinstance(payload, dict):
-                        msg = _api_message(payload) or msg
-                        trace_id = _extract_trace_id(payload) or trace_id
-                except json.JSONDecodeError:
-                    pass
-                suffix_parts = []
-                if trace_id:
-                    suffix_parts.append(f"traceId={trace_id}")
-                if request_id:
-                    suffix_parts.append(f"requestId={request_id}")
-                suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
-                logger.error(
-                    "Cloud: HTTP %s %s %s — %s%s (service=%s)",
-                    resp.status,
-                    method,
-                    url,
-                    msg,
-                    suffix,
-                    self.service.name,
-                )
-                raise CloudApiError(f"{url}: HTTP {resp.status} — {msg}{suffix}")
-
-            try:
-                payload = await resp.json(content_type=None)
-            except Exception as exc:
-                raise CloudApiError(
-                    f"{url}: ответ не JSON (HTTP {resp.status})"
-                ) from exc
-
-            if not isinstance(payload, dict):
-                raise CloudApiError(f"{url}: неожиданный формат ответа")
-
-            return payload
 
 
 def _pick_active_grants(payload: dict) -> list[dict]:
-    """Возвращает гранты со статусом READY из ответа BFF.
-
-    Args:
-        payload: JSON с ``bonus_grants``.
-
-    Returns:
-        Список активных грантов.
-    """
+    """Возвращает гранты со статусом READY из ответа BFF."""
     grants = payload.get("bonus_grants")
     if not isinstance(grants, list):
         return []
@@ -389,21 +267,14 @@ def _pick_active_grants(payload: dict) -> list[dict]:
 
 
 def _aggregate_grants(grants: list[dict]) -> tuple[float | None, datetime | None]:
-    """Суммирует ``current_amount`` и выбирает ближайший ``expire_at``.
-
-    Args:
-        grants: Активные гранты.
-
-    Returns:
-        Пара (баланс, дата окончания).
-    """
+    """Суммирует ``current_amount`` и выбирает ближайший ``expire_at``."""
     amounts: list[float] = []
     expires: list[datetime] = []
     for grant in grants:
-        amount = _to_float(grant.get("current_amount"))
+        amount = to_float(grant.get("current_amount"))
         if amount is not None:
             amounts.append(amount)
-        expire_at = _parse_datetime(grant.get("expire_at"))
+        expire_at = parse_datetime(grant.get("expire_at"))
         if expire_at is not None:
             expires.append(expire_at)
     balance = sum(amounts) if amounts else None
@@ -412,17 +283,7 @@ def _aggregate_grants(grants: list[dict]) -> tuple[float | None, datetime | None
 
 
 def _resolve_auth_mode(cfg: dict) -> str:
-    """Определяет режим auth: ``key`` (IAM), ``bearer`` или ``api_key``.
-
-    Args:
-        cfg: ``plugin_config``.
-
-    Returns:
-        Одна из строк ``key``, ``bearer``, ``api_key``.
-
-    Raises:
-        CloudApiError: Недопустимое значение ``auth``.
-    """
+    """Определяет режим auth: ``key`` (IAM), ``bearer`` или ``api_key``."""
     if raw := cfg.get("auth"):
         auth = str(raw).lower()
         if auth in ("key", "bearer", "api_key"):
@@ -436,104 +297,8 @@ def _resolve_auth_mode(cfg: dict) -> str:
 
 
 def _auth_header(token: str, auth: str) -> dict[str, str]:
-    """Формирует заголовок Authorization для Cloud.ru API.
-
-    Args:
-        token: Секрет или access token.
-        auth: Режим авторизации.
-
-    Returns:
-        Словарь с ключом ``Authorization``.
-    """
+    """Формирует заголовок Authorization для Cloud.ru API."""
     token = token.strip()
     if auth == "api_key":
         return {"Authorization": f"Api-Key {token}"}
     return {"Authorization": f"Bearer {token}"}
-
-
-def _extract_trace_id(payload: dict | None) -> str | None:
-    """Извлекает traceId/requestId из ответа Cloud.ru API."""
-    if not isinstance(payload, dict):
-        return None
-    for key in ("traceId", "trace_id", "requestId", "request_id", "correlationId"):
-        value = payload.get(key)
-        if value:
-            return str(value)
-    err = payload.get("error")
-    if isinstance(err, dict):
-        for key in ("traceId", "trace_id", "requestId", "request_id", "correlationId"):
-            value = err.get(key)
-            if value:
-                return str(value)
-    return None
-
-
-def _api_message(payload: dict | None) -> str | None:
-    """Извлекает текст ошибки из JSON Cloud.ru.
-
-    Args:
-        payload: Тело ответа.
-
-    Returns:
-        Сообщение или ``None``.
-    """
-    if not isinstance(payload, dict):
-        return None
-    err = payload.get("error")
-    if isinstance(err, dict):
-        return err.get("message") or err.get("detail") or err.get("code")
-    if isinstance(err, str):
-        return err
-    return payload.get("message") or payload.get("detail") or payload.get("status_msg")
-
-
-def _to_float(value) -> float | None:
-    """Безопасно приводит значение к ``float``.
-
-    Args:
-        value: Значение из JSON.
-
-    Returns:
-        Число или ``None``.
-    """
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _parse_datetime(raw) -> datetime | None:
-    """Парсит дату/время из ответа Cloud.ru API.
-
-    Args:
-        raw: ISO-строка, unix timestamp, ``date`` или ``datetime``.
-
-    Returns:
-        ``datetime`` в UTC или ``None``.
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, datetime):
-        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
-    if isinstance(raw, date):
-        return datetime(raw.year, raw.month, raw.day, tzinfo=timezone.utc)
-    if isinstance(raw, (int, float)):
-        ts = float(raw)
-        if ts > 1e12:
-            ts /= 1000
-        return datetime.fromtimestamp(ts, tz=timezone.utc)
-    text = str(raw).strip()
-    if not text:
-        return None
-    try:
-        if text.isdigit():
-            ts = int(text)
-            if ts > 1e12:
-                ts /= 1000
-            return datetime.fromtimestamp(ts, tz=timezone.utc)
-        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None

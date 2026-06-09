@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 
 from plugins.cloud import _aggregate_grants
-from plugins.cloud import _extract_trace_id as cloud_extract_trace_id
+from plugins.http_client import extract_trace_id as cloud_extract_trace_id
 from plugins.cloud import _pick_active_grants
 
 

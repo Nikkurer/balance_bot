@@ -1,7 +1,7 @@
 """Unit-тесты служебных функций плагина Aeza."""
 
-from plugins.aeza import _api_message as aeza_api_message
-from plugins.aeza import _extract_trace_id as aeza_extract_trace_id
+from plugins.http_client import api_message as aeza_api_message
+from plugins.http_client import extract_trace_id as aeza_extract_trace_id
 from plugins.aeza import _parse_balance
 
 

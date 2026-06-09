@@ -1,14 +1,19 @@
 """Плагин Aeza (aeza.ru / aeza.net): баланс и дата окончания средств."""
 
-import json
 import logging
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 import aiohttp
 
-from balance_bot.http_errors import format_http_error_body
 from balance_bot.models import ServiceStatus
 from balance_bot.plugins.base import ServicePlugin
+from plugins.http_client import (
+    PluginApiError,
+    PluginHttpClient,
+    extract_trace_id,
+    parse_datetime,
+    to_float,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +36,7 @@ _FORECAST_KEYS = (
 )
 
 
-class AezaApiError(Exception):
+class AezaApiError(PluginApiError):
     """Ошибка ответа или логики Aeza API."""
 
 
@@ -45,7 +50,11 @@ class Plugin(ServicePlugin):
             service: Конфигурация с ``plugin_config`` (``api_token``, ``site``, …).
         """
         super().__init__(service)
-        self._http: aiohttp.ClientSession | None = None
+        self._client = PluginHttpClient(
+            error_class=AezaApiError,
+            log_prefix="Aeza",
+            service_name=service.name,
+        )
 
     async def fetch_status(self) -> ServiceStatus:
         """Запрашивает баланс и ближайшую дату окончания средств.
@@ -127,24 +136,13 @@ class Plugin(ServicePlugin):
         )
 
     async def close(self) -> None:
-        """Закрывает ``aiohttp.ClientSession``."""
-        if self._http and not self._http.closed:
-            await self._http.close()
-        self._http = None
+        """Закрывает HTTP-сессию."""
+        await self._client.close()
 
     async def _forecast_from_services(
         self, base_url: str, token: str, auth: str
     ) -> datetime | None:
-        """Ищет минимальную дату forecast среди услуг ``/services``.
-
-        Args:
-            base_url: Базовый URL API.
-            token: Токен авторизации.
-            auth: Режим ``bearer`` или ``api_key``.
-
-        Returns:
-            Ближайшая дата в UTC или ``None``.
-        """
+        """Ищет минимальную дату forecast среди услуг ``/services``."""
         payload = await self._get(
             f"{base_url}/services",
             token,
@@ -183,96 +181,32 @@ class Plugin(ServicePlugin):
     ) -> dict:
         """Выполняет GET к Aeza API.
 
-        Args:
-            url: Полный URL запроса.
-            token: Токен из ``plugin_config``.
-            auth: ``bearer`` или ``api_key``.
-            params: Query-параметры.
-
-        Returns:
-            Распарсенный JSON.
-
         Raises:
             AezaApiError: HTTP ≥400, не JSON или поле ``error`` в теле.
         """
         headers = {"Accept": "application/json", **_auth_headers(token, auth)}
-        if self._http is None or self._http.closed:
-            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
-
-        logger.debug(
-            "Aeza: GET %s auth=%s params=%s service=%s",
+        payload = await self._client.request_json(
+            "GET",
             url,
-            auth,
-            params,
-            self.service.name,
+            headers=headers,
+            params=params,
         )
-        async with self._http.get(url, headers=headers, params=params) as resp:
-            logger.debug("Aeza: GET %s -> HTTP %s", url, resp.status)
-            if resp.status >= 400:
-                text = await resp.text()
-                msg = format_http_error_body(
-                    resp.status,
-                    text,
-                    content_type=resp.headers.get("Content-Type"),
-                    reason=resp.reason,
-                )
-                trace_id = resp.headers.get("x-trace-id")
-                request_id = resp.headers.get("x-request-id")
-                try:
-                    payload = json.loads(text)
-                    if isinstance(payload, dict):
-                        msg = _api_message(payload) or msg
-                        trace_id = _extract_trace_id(payload) or trace_id
-                except json.JSONDecodeError:
-                    pass
-                suffix_parts = []
-                if trace_id:
-                    suffix_parts.append(f"traceId={trace_id}")
-                if request_id:
-                    suffix_parts.append(f"requestId={request_id}")
-                suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
-                logger.error(
-                    "Aeza: HTTP %s GET %s — %s%s (service=%s)",
-                    resp.status,
-                    url,
-                    msg,
-                    suffix,
-                    self.service.name,
-                )
-                raise AezaApiError(f"{url}: HTTP {resp.status} — {msg}{suffix}")
 
-            try:
-                payload = await resp.json(content_type=None)
-            except Exception as exc:
-                raise AezaApiError(
-                    f"{url}: ответ не JSON (HTTP {resp.status})"
-                ) from exc
+        if payload.get("error"):
+            err = payload["error"]
+            if isinstance(err, dict):
+                msg = err.get("message") or err.get("slug") or str(err)
+            else:
+                msg = str(err)
+            trace_id = extract_trace_id(payload)
+            suffix = f" (traceId={trace_id})" if trace_id else ""
+            raise AezaApiError(f"{url}: {msg}{suffix}")
 
-            if not isinstance(payload, dict):
-                raise AezaApiError(f"{url}: неожиданный формат ответа")
-
-            if payload.get("error"):
-                err = payload["error"]
-                if isinstance(err, dict):
-                    msg = err.get("message") or err.get("slug") or str(err)
-                else:
-                    msg = str(err)
-                trace_id = _extract_trace_id(payload)
-                suffix = f" (traceId={trace_id})" if trace_id else ""
-                raise AezaApiError(f"{url}: {msg}{suffix}")
-
-            return payload
+        return payload
 
 
 def _resolve_base_url(cfg: dict) -> str:
-    """Возвращает ``BASE_URL_RU`` или ``BASE_URL_NET`` по ``site``/``base_url``.
-
-    Args:
-        cfg: ``plugin_config`` сервиса.
-
-    Returns:
-        Базовый URL без завершающего слэша.
-    """
+    """Возвращает ``BASE_URL_RU`` или ``BASE_URL_NET`` по ``site``/``base_url``."""
     if raw := cfg.get("base_url"):
         return str(raw).rstrip("/")
 
@@ -283,18 +217,7 @@ def _resolve_base_url(cfg: dict) -> str:
 
 
 def _resolve_auth(cfg: dict, base_url: str) -> str:
-    """Определяет способ авторизации (bearer / api_key).
-
-    Args:
-        cfg: ``plugin_config``.
-        base_url: URL API (для эвристики my.aeza.ru → api_key).
-
-    Returns:
-        ``"bearer"`` или ``"api_key"``.
-
-    Raises:
-        AezaApiError: Неверное значение ``auth`` в конфиге.
-    """
+    """Определяет способ авторизации (bearer / api_key)."""
     if raw := cfg.get("auth"):
         auth = str(raw).lower()
         if auth in ("bearer", "api_key"):
@@ -307,15 +230,7 @@ def _resolve_auth(cfg: dict, base_url: str) -> str:
 
 
 def _auth_headers(token: str, auth: str) -> dict[str, str]:
-    """Формирует заголовки Authorization или X-API-Key.
-
-    Args:
-        token: Секрет из конфига.
-        auth: Режим авторизации.
-
-    Returns:
-        Словарь заголовков для aiohttp.
-    """
+    """Формирует заголовки Authorization или X-API-Key."""
     token = token.strip()
     if auth == "api_key":
         return {"X-API-Key": token}
@@ -323,103 +238,15 @@ def _auth_headers(token: str, auth: str) -> dict[str, str]:
 
 
 def _unwrap_data(payload: dict, label: str) -> dict:
-    """Извлекает ``data`` из обёртки ответа Aeza.
-
-    Args:
-        payload: JSON ответа.
-        label: Метка для ошибки.
-
-    Returns:
-        Объект ``data``.
-
-    Raises:
-        AezaApiError: ``data`` отсутствует.
-    """
+    """Извлекает ``data`` из обёртки ответа Aeza."""
     data = payload.get("data")
     if isinstance(data, dict):
         return data
     raise AezaApiError(f"{label}: поле data отсутствует в ответе")
 
 
-def _unwrap_account(payload: dict) -> dict:
-    """Возвращает текущий аккаунт из ответа ``/accounts``.
-
-    Args:
-        payload: JSON ответа.
-
-    Returns:
-        Словарь аккаунта с полем ``balance``.
-
-    Raises:
-        AezaApiError: Аккаунт не найден в ``data.items``.
-    """
-    data = payload.get("data")
-    if not isinstance(data, dict):
-        raise AezaApiError("accounts: поле data отсутствует в ответе")
-
-    items = data.get("items")
-    if isinstance(items, list) and items:
-        first = items[0]
-        if isinstance(first, dict):
-            return first
-    if isinstance(data, dict) and ("balance" in data or "id" in data):
-        return data
-    raise AezaApiError("accounts: не найден текущий аккаунт")
-
-
-def _api_message(payload: dict | None) -> str | None:
-    """Достаёт текст ошибки из JSON Aeza.
-
-    Args:
-        payload: Тело ответа.
-
-    Returns:
-        Сообщение или ``None``.
-    """
-    if not isinstance(payload, dict):
-        return None
-    err = payload.get("error")
-    if isinstance(err, dict):
-        return err.get("message") or err.get("slug")
-    return payload.get("status_msg") or payload.get("message")
-
-
-def _extract_trace_id(payload: dict | None) -> str | None:
-    """Извлекает traceId/requestId из ошибки Aeza API.
-
-    Args:
-        payload: Тело ответа API.
-
-    Returns:
-        Значение trace id или ``None``.
-    """
-    if not isinstance(payload, dict):
-        return None
-    for key in ("traceId", "trace_id", "requestId", "request_id"):
-        value = payload.get(key)
-        if value:
-            return str(value)
-    err = payload.get("error")
-    if isinstance(err, dict):
-        for key in ("traceId", "trace_id", "requestId", "request_id"):
-            value = err.get(key)
-            if value:
-                return str(value)
-    return None
-
-
 def _parse_balance(data: dict) -> tuple[float | None, str | None]:
-    """Парсит баланс и валюту из объекта аккаунта/desktop.
-
-    Aeza хранит суммы в минимальных единицах (копейки для RUB); ``value``
-    делится на ``10 ** round`` (по умолчанию ``round=2`` → деление на 100).
-
-    Args:
-        data: Словарь из API.
-
-    Returns:
-        Пара ``(balance, currency)``.
-    """
+    """Парсит баланс и валюту из объекта аккаунта/desktop."""
     balance_obj = data.get("balance")
     if isinstance(balance_obj, dict):
         value = balance_obj.get("value")
@@ -448,44 +275,19 @@ def _balance_divisor(balance_obj: dict | None) -> float:
 
 def _normalize_balance_value(value, balance_obj: dict | None = None) -> float | None:
     """Переводит сумму из копеек/центов в основные единицы валюты."""
-    parsed = _to_float(value)
+    parsed = to_float(value)
     if parsed is None:
         return None
     return parsed / _balance_divisor(balance_obj)
 
 
-def _to_float(value) -> float | None:
-    """Безопасно приводит значение к ``float``.
-
-    Args:
-        value: Значение из JSON.
-
-    Returns:
-        Число или ``None``.
-    """
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _find_forecast(obj: dict, depth: int = 0) -> datetime | None:
-    """Рекурсивно ищет поле даты окончания средств в JSON.
-
-    Args:
-        obj: Вложенный объект ответа.
-        depth: Текущая глубина рекурсии (лимит 6).
-
-    Returns:
-        Первая найденная дата в UTC или ``None``.
-    """
+    """Рекурсивно ищет поле даты окончания средств в JSON."""
     if depth > 6 or not isinstance(obj, dict):
         return None
     for key in _FORECAST_KEYS:
         if key in obj:
-            parsed = _parse_datetime(obj[key])
+            parsed = parse_datetime(obj[key])
             if parsed:
                 return parsed
     for value in obj.values():
@@ -494,38 +296,3 @@ def _find_forecast(obj: dict, depth: int = 0) -> datetime | None:
             if parsed:
                 return parsed
     return None
-
-
-def _parse_datetime(raw) -> datetime | None:
-    """Парсит дату/время из разных форматов Aeza API.
-
-    Args:
-        raw: ISO-строка, unix timestamp, ``date`` или ``datetime``.
-
-    Returns:
-        ``datetime`` в UTC или ``None``.
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, datetime):
-        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
-    if isinstance(raw, date):
-        return datetime(raw.year, raw.month, raw.day, tzinfo=timezone.utc)
-    if isinstance(raw, (int, float)):
-        ts = float(raw)
-        if ts > 1e12:
-            ts /= 1000
-        return datetime.fromtimestamp(ts, tz=timezone.utc)
-    text = str(raw).strip()
-    if not text:
-        return None
-    try:
-        if text.isdigit():
-            ts = int(text)
-            if ts > 1e12:
-                ts /= 1000
-            return datetime.fromtimestamp(ts, tz=timezone.utc)
-        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None

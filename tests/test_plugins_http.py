@@ -96,7 +96,7 @@ async def test_aeza_get_http_500_includes_trace_id(aeza_ru_plugin: AezaPlugin) -
             headers={"x-request-id": "req-aeza-1"},
         )
     ]
-    with patch_aiohttp_session("plugins.aeza", routes):
+    with patch_aiohttp_session("plugins.http_client", routes):
         with pytest.raises(AezaApiError) as exc_info:
             await aeza_ru_plugin._get(
                 AEZA_RU_ACCOUNTS,
@@ -128,7 +128,7 @@ async def test_aeza_fetch_status_success(aeza_plugin: AezaPlugin) -> None:
             },
         )
     ]
-    with patch_aiohttp_session("plugins.aeza", routes):
+    with patch_aiohttp_session("plugins.http_client", routes):
         status = await aeza_plugin.fetch_status()
 
     assert status.error is None
@@ -156,7 +156,7 @@ async def test_aeza_ru_fetch_status_success_via_desktop(aeza_ru_plugin: AezaPlug
             },
         )
     ]
-    with patch_aiohttp_session("plugins.aeza", routes):
+    with patch_aiohttp_session("plugins.http_client", routes):
         status = await aeza_ru_plugin.fetch_status()
 
     assert status.error is None
@@ -181,7 +181,7 @@ async def test_aeza_fetch_status_maps_http_500_to_error(aeza_ru_plugin: AezaPlug
             },
         )
     ]
-    with patch_aiohttp_session("plugins.aeza", routes):
+    with patch_aiohttp_session("plugins.http_client", routes):
         status = await aeza_ru_plugin.fetch_status()
 
     assert status.balance is None
@@ -204,7 +204,7 @@ async def test_vdsina_get_http_500_includes_request_id(vdsina_plugin: VdsinaPlug
             headers={"x-request-id": "vds-req-99"},
         )
     ]
-    with patch_aiohttp_session("plugins.vdsina", routes):
+    with patch_aiohttp_session("plugins.http_client", routes):
         with pytest.raises(VdsinaApiError) as exc_info:
             await vdsina_plugin._get(
                 "https://userapi.vdsina.ru/v1",
@@ -234,8 +234,8 @@ async def test_vdsina_get_http_504_html_body(
             reason="Gateway Timeout",
         )
     ]
-    with caplog.at_level("ERROR", logger="plugins.vdsina"):
-        with patch_aiohttp_session("plugins.vdsina", routes):
+    with caplog.at_level("ERROR", logger="plugins.http_client"):
+        with patch_aiohttp_session("plugins.http_client", routes):
             with pytest.raises(VdsinaApiError):
                 await vdsina_plugin._get(
                     "https://userapi.vdsina.ru/v1",
@@ -272,7 +272,7 @@ async def test_vdsina_fetch_status_success(vdsina_plugin: VdsinaPlugin) -> None:
             },
         ),
     ]
-    with patch_aiohttp_session("plugins.vdsina", routes):
+    with patch_aiohttp_session("plugins.http_client", routes):
         status = await vdsina_plugin.fetch_status()
 
     assert status.error is None
@@ -295,7 +295,7 @@ async def test_vdsina_fetch_status_maps_http_500_to_error(vdsina_plugin: VdsinaP
             headers={"x-request-id": "vds-req-99"},
         )
     ]
-    with patch_aiohttp_session("plugins.vdsina", routes):
+    with patch_aiohttp_session("plugins.http_client", routes):
         status = await vdsina_plugin.fetch_status()
 
     assert status.error is not None
@@ -324,7 +324,7 @@ async def test_cloud_request_json_http_500_includes_trace_id(
             headers={"x-request-id": "cloud-req-3"},
         )
     ]
-    with patch_aiohttp_session("plugins.cloud", routes):
+    with patch_aiohttp_session("plugins.http_client", routes):
         with pytest.raises(CloudApiError) as exc_info:
             await cloud_plugin._request_json(
                 "GET",
@@ -359,7 +359,7 @@ async def test_cloud_fetch_status_uses_active_grant(cloud_plugin: CloudPlugin) -
             },
         )
     ]
-    with patch_aiohttp_session("plugins.cloud", routes):
+    with patch_aiohttp_session("plugins.http_client", routes):
         status = await cloud_plugin.fetch_status()
 
     assert status.error is None
@@ -396,7 +396,7 @@ async def test_cloud_fetch_status_uses_balance_when_no_active_grant(
             json_body={"balance": 5.63, "is_trial": False},
         ),
     ]
-    with patch_aiohttp_session("plugins.cloud", routes):
+    with patch_aiohttp_session("plugins.http_client", routes):
         status = await cloud_plugin.fetch_status()
 
     assert status.error is None
@@ -418,7 +418,7 @@ async def test_cloud_fetch_status_success(cloud_plugin: CloudPlugin) -> None:
             json_body={"balance": 2500.75, "is_trial": False},
         ),
     ]
-    with patch_aiohttp_session("plugins.cloud", routes):
+    with patch_aiohttp_session("plugins.http_client", routes):
         status = await cloud_plugin.fetch_status()
 
     assert status.error is None
@@ -443,7 +443,7 @@ async def test_cloud_fetch_status_maps_http_500_to_error(cloud_plugin: CloudPlug
             },
         ),
     ]
-    with patch_aiohttp_session("plugins.cloud", routes):
+    with patch_aiohttp_session("plugins.http_client", routes):
         status = await cloud_plugin.fetch_status()
 
     assert status.error is not None
