@@ -14,7 +14,7 @@ timezone: UTC
 #   path: data/balance_bot.db
 #   retention_days: 365
 #   max_size_mb: 32
-#   record_errors: false
+#   record_errors: false        # сбои — в poll_errors, не в balance_history
 
 services:
   # Документация: docs/plugins/vdsina.md, docs/plugins/aeza.md, docs/plugins/cloud.md, docs/plugins/mock.md

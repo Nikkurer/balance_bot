@@ -73,7 +73,7 @@ async def test_poll_once_notifies_only_on_new_alerts(make_service) -> None:
     await poller.poll_once()
 
     assert len(messages) == 1
-    assert "низкий баланс" in messages[0]
+    assert "баланс 5 RUB" in messages[0]
     assert state.get_active_alerts("svc") == {"low_balance"}
 
 
@@ -128,7 +128,7 @@ async def test_poll_once_plugin_exception_sets_error_status(make_service) -> Non
     assert stored is not None
     assert stored.error == "boom"
     assert len(messages) == 1
-    assert "ошибка опроса" in messages[0]
+    assert "boom" in messages[0]
 
 
 @pytest.mark.asyncio

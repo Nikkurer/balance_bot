@@ -128,7 +128,12 @@ async def run(
         )
     logger.info("Запущен мониторинг %d сервис(ов)", len(config.services))
 
-    dp = create_dispatcher(config, state, on_refresh=scheduler.poll_all_now)
+    dp = create_dispatcher(
+        config,
+        state,
+        on_refresh=scheduler.poll_all_now,
+        history=history_store,
+    )
 
     await register_bot_commands(bot)
     logger.info("Команды бота зарегистрированы в Telegram")

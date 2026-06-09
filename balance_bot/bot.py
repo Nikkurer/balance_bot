@@ -12,11 +12,23 @@ from aiogram.types import (
     BotCommandScopeAllPrivateChats,
     BotCommandScopeChat,
     BotCommandScopeDefault,
+    BufferedInputFile,
+    CallbackQuery,
     MenuButtonCommands,
     Message,
     TelegramObject,
 )
 
+from balance_bot.charts import (
+    CHART_PERIODS,
+    parse_chart_command_args,
+    parse_period_callback,
+    parse_service_callback,
+    period_keyboard,
+    render_balance_chart,
+    service_keyboard,
+)
+from balance_bot.history import HistoryStore
 from balance_bot.models import AppConfig
 from balance_bot.notifications import format_status_message
 from balance_bot.state import StateStore
@@ -27,6 +39,7 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand(command="start", description="Справка по боту"),
     BotCommand(command="status", description="Состояние всех сервисов"),
     BotCommand(command="refresh", description="Принудительный опрос"),
+    BotCommand(command="chart", description="График баланса"),
 ]
 
 
@@ -34,7 +47,7 @@ async def register_bot_commands(bot: Bot, *, chat_id: int | None = None) -> None
     """Регистрирует команды бота в меню Telegram.
 
     Вызывает ``setMyCommands`` для нескольких scope и языков (в т.ч. ``ru``),
-    затем устанавливает кнопку меню «Команды``.
+    затем устанавливает кнопку меню «Команды».
 
     Args:
         bot: Экземпляр aiogram ``Bot``.
@@ -72,7 +85,7 @@ async def register_bot_commands(bot: Bot, *, chat_id: int | None = None) -> None
 
 
 class AuthMiddleware(BaseMiddleware):
-    """Отклоняет сообщения от пользователей вне ``allowed_user_ids``."""
+    """Отклоняет сообщения и callback от пользователей вне ``allowed_user_ids``."""
 
     def __init__(self, allowed_user_ids: set[int]) -> None:
         """Запоминает белый список ID.
@@ -81,6 +94,13 @@ class AuthMiddleware(BaseMiddleware):
             allowed_user_ids: Разрешённые Telegram user ID.
         """
         self.allowed_user_ids = allowed_user_ids
+
+    def _user_id(self, event: TelegramObject) -> int | None:
+        if isinstance(event, Message):
+            return event.from_user.id if event.from_user else None
+        if isinstance(event, CallbackQuery):
+            return event.from_user.id if event.from_user else None
+        return None
 
     async def __call__(
         self,
@@ -98,11 +118,14 @@ class AuthMiddleware(BaseMiddleware):
         Returns:
             Результат ``handler`` или ``None``, если доступ запрещён.
         """
-        if isinstance(event, Message):
-            user_id = event.from_user.id if event.from_user else None
+        if isinstance(event, (Message, CallbackQuery)):
+            user_id = self._user_id(event)
             if user_id not in self.allowed_user_ids:
                 logger.debug("AuthMiddleware: deny user_id=%s", user_id)
-                await event.answer("Нет доступа.")
+                if isinstance(event, Message):
+                    await event.answer("Нет доступа.")
+                else:
+                    await event.answer("Нет доступа.", show_alert=True)
                 return None
             logger.debug("AuthMiddleware: allow user_id=%s", user_id)
         return await handler(event, data)
@@ -112,20 +135,58 @@ def create_dispatcher(
     config: AppConfig,
     state: StateStore,
     on_refresh: Callable[[], Awaitable[None]] | None = None,
+    history: HistoryStore | None = None,
 ) -> Dispatcher:
-    """Создаёт ``Dispatcher`` с командами ``/start``, ``/status``, ``/refresh``.
+    """Создаёт ``Dispatcher`` с командами бота.
 
     Args:
         config: Конфигурация (для списка разрешённых user ID).
         state: Хранилище снимков для ``/status``.
         on_refresh: Async-функция принудительного опроса всех сервисов;
             ``None`` — команда ``/refresh`` отвечает «недоступен».
+        history: Хранилище SQLite для ``/chart``; ``None`` — история отключена.
 
     Returns:
         Настроенный экземпляр ``Dispatcher``.
     """
     dp = Dispatcher()
-    dp.message.middleware(AuthMiddleware(set(config.allowed_user_ids)))
+    auth = AuthMiddleware(set(config.allowed_user_ids))
+    dp.message.middleware(auth)
+    dp.callback_query.middleware(auth)
+
+    service_names = {s.name for s in config.services}
+    service_list = sorted(service_names)
+
+    async def send_chart(
+        message: Message,
+        service: str,
+        period: str,
+    ) -> None:
+        if history is None:
+            await message.answer("История отключена в конфиге (history.enabled).")
+            return
+        if service not in service_names:
+            await message.answer(
+                f"Неизвестный сервис «{service}». Доступны: {', '.join(service_list)}"
+            )
+            return
+        if period not in CHART_PERIODS:
+            await message.answer(
+                f"Неизвестный период «{period}». Доступны: {', '.join(CHART_PERIODS)}"
+            )
+            return
+
+        result = await render_balance_chart(history, service, period)
+        if result is None:
+            await message.answer(f"Нет данных для «{service}» за период {period}.")
+            return
+
+        png, caption = result
+        await message.answer_photo(
+            BufferedInputFile(png, filename="chart.png"),
+            caption=caption,
+            parse_mode=ParseMode.HTML,
+        )
 
     @dp.message(Command("start"))
     async def cmd_start(message: Message) -> None:
@@ -138,7 +199,8 @@ def create_dispatcher(
         await message.answer(
             "Мониторинг баланса и подписок.\n\n"
             "/status — статус\n"
-            "/refresh — опрос"
+            "/refresh — опрос\n"
+            "/chart — график баланса"
         )
 
     @dp.message(Command("status"))
@@ -163,10 +225,88 @@ def create_dispatcher(
         await on_refresh()
         await cmd_status(message)
 
+    @dp.message(Command("chart"))
+    async def cmd_chart(message: Message) -> None:
+        logger.debug("Команда /chart: chat_id=%s text=%r", message.chat.id, message.text)
+        if history is None:
+            await message.answer("История отключена в конфиге (history.enabled).")
+            return
+        if not service_list:
+            await message.answer("В конфиге нет сервисов.")
+            return
+
+        service, period = parse_chart_command_args(message.text)
+        if service is None:
+            await message.answer(
+                "Выберите сервис:",
+                reply_markup=service_keyboard(service_list),
+            )
+            return
+        if service not in service_names:
+            await message.answer(
+                f"Неизвестный сервис «{service}». Доступны: {', '.join(service_list)}"
+            )
+            return
+        if period is None:
+            await message.answer(
+                f"Период для <b>{service}</b>:",
+                reply_markup=period_keyboard(service),
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        await send_chart(message, service, period)
+
+    @dp.callback_query(F.data.startswith("chart:s:"))
+    async def on_chart_service(callback: CallbackQuery) -> None:
+        service = parse_service_callback(callback.data or "")
+        if not service or service not in service_names:
+            await callback.answer("Неизвестный сервис", show_alert=True)
+            return
+        await callback.answer()
+        if callback.message is None:
+            return
+        await callback.message.edit_text(
+            f"Период для <b>{service}</b>:",
+            reply_markup=period_keyboard(service),
+            parse_mode=ParseMode.HTML,
+        )
+
+    @dp.callback_query(F.data.startswith("chart:p:"))
+    async def on_chart_period(callback: CallbackQuery) -> None:
+        if history is None:
+            await callback.answer("История отключена", show_alert=True)
+            return
+        parsed = parse_period_callback(callback.data or "")
+        if parsed is None:
+            await callback.answer("Некорректный запрос", show_alert=True)
+            return
+        service, period = parsed
+        if service not in service_names:
+            await callback.answer("Неизвестный сервис", show_alert=True)
+            return
+
+        await callback.answer("Строю график…")
+        if callback.message is None:
+            return
+
+        result = await render_balance_chart(history, service, period)
+        if result is None:
+            await callback.message.answer(
+                f"Нет данных для «{service}» за период {period}."
+            )
+            return
+
+        png, caption = result
+        await callback.message.answer_photo(
+            BufferedInputFile(png, filename="chart.png"),
+            caption=caption,
+            parse_mode=ParseMode.HTML,
+        )
+
     @dp.message(F.text)
     async def unknown(message: Message) -> None:
         logger.debug("Неизвестная команда/текст: chat_id=%s text=%r", message.chat.id, message.text)
-        await message.answer("/status · /refresh")
+        await message.answer("/status · /refresh · /chart")
 
     return dp
 

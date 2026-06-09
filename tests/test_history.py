@@ -87,7 +87,7 @@ async def test_record_successful_poll(history_store: HistoryStore) -> None:
     await history_store.record("cloud-main", "cloud", status)
 
     row = history_store._conn.execute(  # noqa: SLF001
-        "SELECT ts, service, balance, currency, source, plugin, error FROM balance_history"
+        "SELECT ts, service, balance, currency, source, plugin FROM balance_history"
     ).fetchone()
     assert row == (
         "2026-05-01T12:00:00+00:00",
@@ -96,7 +96,6 @@ async def test_record_successful_poll(history_store: HistoryStore) -> None:
         "RUB",
         "grant",
         "cloud",
-        None,
     )
 
 
@@ -107,10 +106,14 @@ async def test_record_skips_error_by_default(history_store: HistoryStore) -> Non
         "mock",
         ServiceStatus(error="fail", last_updated=datetime.now(timezone.utc)),
     )
-    count = history_store._conn.execute(  # noqa: SLF001
+    balance_count = history_store._conn.execute(  # noqa: SLF001
         "SELECT COUNT(*) FROM balance_history"
     ).fetchone()[0]
-    assert count == 0
+    error_count = history_store._conn.execute(  # noqa: SLF001
+        "SELECT COUNT(*) FROM poll_errors"
+    ).fetchone()[0]
+    assert balance_count == 0
+    assert error_count == 0
 
 
 @pytest.mark.asyncio
@@ -130,10 +133,15 @@ async def test_record_errors_when_enabled(history_db: Path) -> None:
         ServiceStatus(error="timeout", last_updated=datetime.now(timezone.utc)),
     )
     row = store._conn.execute(  # noqa: SLF001
-        "SELECT error, balance FROM balance_history"
+        "SELECT error, service FROM poll_errors"
     ).fetchone()
+    balance_count = store._conn.execute(  # noqa: SLF001
+        "SELECT COUNT(*) FROM balance_history"
+    ).fetchone()[0]
     await store.close()
-    assert row == ("timeout", None)
+    assert row[0] == "timeout"
+    assert row[1] == "svc"
+    assert balance_count == 0
 
 
 @pytest.mark.asyncio
@@ -263,3 +271,92 @@ async def test_prune_skips_when_retention_and_size_disabled(
     )
     stats = await history_store.prune()
     assert stats.deleted_rows == 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_series_returns_points_in_order(history_store: HistoryStore) -> None:
+    ts1 = datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc)
+    ts2 = datetime(2026, 5, 2, 10, 0, tzinfo=timezone.utc)
+    await history_store.record(
+        "svc",
+        "mock",
+        ServiceStatus(balance=10.0, currency="RUB", last_updated=ts1),
+    )
+    await history_store.record(
+        "svc",
+        "mock",
+        ServiceStatus(balance=20.0, currency="RUB", last_updated=ts2),
+    )
+
+    since = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+    points = await history_store.fetch_series("svc", since=since)
+
+    assert len(points) == 1
+    assert points[0].balance == 20.0
+    assert points[0].currency == "RUB"
+
+
+@pytest.mark.asyncio
+async def test_count_poll_errors(history_db: Path) -> None:
+    config = HistoryConfig(
+        enabled=True,
+        path=str(history_db),
+        retention_days=7,
+        max_size_mb=0,
+        record_errors=True,
+    )
+    store = HistoryStore(config, history_db)
+    await store.open()
+    ts = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+    await store.record("svc", "mock", ServiceStatus(error="504", last_updated=ts))
+    count = await store.count_poll_errors(
+        "svc", since=datetime(2026, 4, 1, tzinfo=timezone.utc)
+    )
+    await store.close()
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_migrate_legacy_errors_from_balance_history(history_db: Path) -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(history_db)
+    conn.executescript(
+        """
+        CREATE TABLE balance_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            service TEXT NOT NULL,
+            balance REAL,
+            currency TEXT,
+            subscription_end TEXT,
+            error TEXT,
+            source TEXT,
+            plugin TEXT
+        );
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO balance_history (ts, service, balance, error, plugin)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        ("2026-01-01T00:00:00+00:00", "old-svc", None, "legacy fail", "mock"),
+    )
+    conn.commit()
+    conn.close()
+
+    config = HistoryConfig(enabled=True, path=str(history_db), retention_days=7, max_size_mb=0)
+    store = HistoryStore(config, history_db)
+    await store.open()
+
+    error_row = store._conn.execute(  # noqa: SLF001
+        "SELECT service, error FROM poll_errors"
+    ).fetchone()
+    balance_count = store._conn.execute(  # noqa: SLF001
+        "SELECT COUNT(*) FROM balance_history"
+    ).fetchone()[0]
+    await store.close()
+
+    assert error_row == ("old-svc", "legacy fail")
+    assert balance_count == 0
