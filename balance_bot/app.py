@@ -11,8 +11,9 @@ from aiogram import Bot
 from aiogram.client.session.aiohttp import AiohttpSession
 
 from balance_bot.bot import create_dispatcher, notify_users, register_bot_commands
+from balance_bot.config import load_config
+from balance_bot.exceptions import ConfigError
 from balance_bot.logging_setup import setup_logging
-from balance_bot.config import ConfigError, load_config
 from balance_bot.history import HistoryStore, resolve_history_path
 from balance_bot.plugins.loader import (
     create_plugin,
@@ -95,7 +96,13 @@ async def run(
         logger.debug("Хранение истории баланса включено: %s", db_path)
         history_store = HistoryStore(config.history, db_path)
         await history_store.open()
-        await history_store.prune()
+        prune_stats = await history_store.prune()
+        if prune_stats.deleted_rows > 0:
+            logger.info(
+                "Начальный prune истории: удалено %d строк, vacuum_pages=%s",
+                prune_stats.deleted_rows,
+                prune_stats.vacuum_pages,
+            )
         logger.debug(
             "History config: retention_days=%s max_size_mb=%s record_errors=%s "
             "prune_interval_hours=%s",
@@ -199,9 +206,9 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     config_path = Path(args.config)
-    setup_logging(verbose=debug_enabled)
     if not config_path.exists():
-        logger.error("Config file not found: %s", config_path)
+        setup_logging(verbose=debug_enabled)
+        logging.getLogger(__name__).error("Config file not found: %s", config_path)
         sys.exit(1)
 
     plugins_override = Path(args.plugins_dir) if args.plugins_dir else None

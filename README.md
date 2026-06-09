@@ -152,6 +152,8 @@ history:
 
 Плагины лежат в каталоге `plugins/` (настраивается через `plugins_dir`). Добавление — копирование файла в эту папку и указание `plugin: <имя>` в конфиге. Код бота менять не нужно.
 
+**Безопасность:** каталог плагинов — доверенная зона. При старте бот выполняет произвольный Python-код из `.py` файлов с теми же правами, что и сам процесс (доступ к сети, секретам из `config.yaml`, записи в историю). Монтируйте только проверенный код; в Docker compose каталог обычно `:ro`, но это не изолирует выполнение.
+
 - Общее и контракт: [docs/plugins/README.md](docs/plugins/README.md)
 - Документация по сервисам: [mock](docs/plugins/mock.md), [vdsina](docs/plugins/vdsina.md), [aeza](docs/plugins/aeza.md), [cloud](docs/plugins/cloud.md)
 - Шаблон для нового плагина: [PLUGIN_TEMPLATE.md](docs/plugins/PLUGIN_TEMPLATE.md)

@@ -3,7 +3,8 @@
 import pytest
 
 from balance_bot.models import HistoryConfig, ServiceConfig
-from balance_bot.validation import ConfigError, validate_config
+from balance_bot.exceptions import ConfigError
+from balance_bot.validation import validate_config
 
 
 def test_valid_config_passes(make_app_config) -> None:

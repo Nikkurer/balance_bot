@@ -177,9 +177,7 @@ class Plugin(ServicePlugin):
         payload = await self._request_json(
             "POST",
             iam_url,
-            None,
             json_body={"keyId": str(key_id).strip(), "secret": str(key_secret).strip()},
-            auth_header=None,
         )
         token = (
             payload.get("access_token")
@@ -206,7 +204,7 @@ class Plugin(ServicePlugin):
         auth = _resolve_auth_mode(cfg)
         query = urlencode([("statuses", status) for status in GRANT_QUERY_STATUSES])
         path = f"/v1/agreements/{agreement_id}/grants?{query}"
-        return await self._get_json(base_url, path, token, cfg, auth)
+        return await self._get_json(base_url, path, token, auth)
 
     async def _fetch_balance(
         self, base_url: str, token: str, cfg: dict, agreement_id: str
@@ -214,14 +212,13 @@ class Plugin(ServicePlugin):
         """GET баланса договора из BFF v2."""
         auth = _resolve_auth_mode(cfg)
         path = f"/v2/agreements/{agreement_id}/balance"
-        return await self._get_json(base_url, path, token, cfg, auth)
+        return await self._get_json(base_url, path, token, auth)
 
     async def _get_json(
         self,
         base_url: str,
         path: str,
         token: str,
-        cfg: dict,
         auth: str,
     ) -> dict:
         """GET к BFF console API."""
@@ -229,7 +226,6 @@ class Plugin(ServicePlugin):
         return await self._request_json(
             "GET",
             url,
-            cfg,
             auth_header=_auth_header(token, auth),
         )
 
@@ -237,10 +233,9 @@ class Plugin(ServicePlugin):
         self,
         method: str,
         url: str,
-        cfg: dict | None,
         *,
         json_body: dict | None = None,
-        auth_header: dict[str, str] | None,
+        auth_header: dict[str, str] | None = None,
     ) -> dict:
         """Универсальный HTTP-запрос с разбором JSON (IAM и BFF API)."""
         headers = {"Accept": "application/json"}

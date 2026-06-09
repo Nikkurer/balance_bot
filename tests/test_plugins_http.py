@@ -329,7 +329,6 @@ async def test_cloud_request_json_http_500_includes_trace_id(
             await cloud_plugin._request_json(
                 "GET",
                 CLOUD_BALANCE,
-                None,
                 auth_header={"Authorization": "Bearer cloud-token"},
             )
 

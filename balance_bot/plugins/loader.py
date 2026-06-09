@@ -5,7 +5,7 @@ import logging
 import sys
 from pathlib import Path
 
-from balance_bot.config import ConfigError
+from balance_bot.exceptions import ConfigError
 from balance_bot.models import ServiceConfig
 from balance_bot.plugins.base import ServicePlugin
 

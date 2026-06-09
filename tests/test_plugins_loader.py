@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from balance_bot.config import ConfigError
+from balance_bot.exceptions import ConfigError
 from balance_bot.plugins.loader import (
     create_plugin,
     discover_plugins,

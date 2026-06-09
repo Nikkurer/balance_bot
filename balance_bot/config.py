@@ -6,7 +6,8 @@ from pathlib import Path
 import yaml
 
 from balance_bot.models import AppConfig, HistoryConfig, ServiceConfig
-from balance_bot.validation import ConfigError, validate_config
+from balance_bot.exceptions import ConfigError
+from balance_bot.validation import validate_config
 
 logger = logging.getLogger(__name__)
 

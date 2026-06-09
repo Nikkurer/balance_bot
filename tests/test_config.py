@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from balance_bot.config import ConfigError, load_config
+from balance_bot.config import load_config
+from balance_bot.exceptions import ConfigError
 from balance_bot.models import AppConfig
 
 

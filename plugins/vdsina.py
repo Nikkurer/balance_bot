@@ -1,5 +1,6 @@
 """Плагин VDSina Public API: баланс и прогноз окончания средств (forecast)."""
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -72,8 +73,10 @@ class Plugin(ServicePlugin):
         )
 
         try:
-            balance_payload = await self._get(base_url, token, "account.balance")
-            account_payload = await self._get(base_url, token, "account")
+            balance_payload, account_payload = await asyncio.gather(
+                self._get(base_url, token, "account.balance"),
+                self._get(base_url, token, "account"),
+            )
         except VdsinaApiError as exc:
             return ServiceStatus(error=str(exc), last_updated=now)
         except aiohttp.ClientError as exc:

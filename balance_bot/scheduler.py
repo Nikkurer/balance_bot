@@ -304,12 +304,15 @@ class Scheduler:
             return
         try:
             stats = await self.history.prune()
-            logger.debug(
-                "Scheduler: prune (%s) deleted=%d vacuum_pages=%d",
-                reason,
-                stats.deleted_rows,
-                stats.vacuum_pages,
-            )
+            if stats.deleted_rows > 0:
+                logger.info(
+                    "Scheduler: prune (%s) удалено %d строк, vacuum_pages=%s",
+                    reason,
+                    stats.deleted_rows,
+                    stats.vacuum_pages,
+                )
+            else:
+                logger.debug("Scheduler: prune (%s) нечего удалять", reason)
         except Exception as exc:
             logger.info("История баланса: prune (%s) не удался — %s", reason, exc)
             logger.debug("История баланса: prune", exc_info=True)

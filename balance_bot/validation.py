@@ -3,12 +3,8 @@
 import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from balance_bot.exceptions import ConfigError
 from balance_bot.models import AppConfig, ServiceConfig
-
-
-class ConfigError(Exception):
-    """Ошибка конфигурации с перечнем проблем в сообщении."""
-
 
 _TOKEN_RE = re.compile(r"^\d+:[A-Za-z0-9_-]+$")
 # Лимит Telegram для текста inline-кнопки (символы)

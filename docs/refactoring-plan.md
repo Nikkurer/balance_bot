@@ -188,7 +188,9 @@
 
 ---
 
-## Этап 6 — Мелочи и чистка (по желанию)
+## Этап 6 — Мелочи и чистка (по желанию) ✅
+
+*Реализовано: один `setup_logging` в `run()`; `ConfigError` в `exceptions.py`; логи `PruneStats`; `asyncio.gather` в VDSina; упрощён `cloud._request_json`; trust boundary в README.*
 
 | Задача | Файлы |
 |--------|-------|
