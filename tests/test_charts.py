@@ -2,14 +2,14 @@
 
 from datetime import datetime, timedelta, timezone
 
-from balance_bot.charts import (
-    aggregate_points_for_chart,
+from balance_bot.chart_data import aggregate_points_for_chart, period_since
+from balance_bot.chart_render import render_chart_sync
+from balance_bot.chart_ui import (
     callback_data_fits,
     parse_chart_command_args,
     parse_period_callback,
     parse_service_callback,
     period_callback_data,
-    period_since,
     resolve_service_name,
     service_callback_data,
     service_keyboard,
@@ -96,8 +96,6 @@ def test_aggregate_disabled_when_zero() -> None:
 
 
 def test_render_chart_sync_produces_png() -> None:
-    from balance_bot.charts import _render_chart_sync
-
     points = [
         BalancePoint(
             ts=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
@@ -110,7 +108,7 @@ def test_render_chart_sync_produces_png() -> None:
             currency="RUB",
         ),
     ]
-    png, caption = _render_chart_sync(
+    png, caption = render_chart_sync(
         "svc",
         points,
         period="7d",

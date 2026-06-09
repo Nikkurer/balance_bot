@@ -133,7 +133,9 @@
 
 ---
 
-## Этап 4 — Разделение слоёв бота и графиков (низкий приоритет)
+## Этап 4 — Разделение слоёв бота и графиков (низкий приоритет) ✅
+
+*Реализовано: `chart_data.py`, `chart_render.py` (lazy matplotlib), `chart_ui.py`; handlers в `balance_bot/handlers/`; `send_chart_photo`; `bot_commands.py`.*
 
 Проблема: `charts.py` смешивает matplotlib, агрегацию и Telegram-клавиатуры; `create_dispatcher` — god-function.
 
