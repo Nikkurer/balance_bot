@@ -107,11 +107,11 @@
 
 ## Этап 3 — Общий HTTP-слой плагинов (средний приоритет, высокая отдача) ✅
 
-*Реализовано: `plugins/http_client.py` (`PluginHttpClient`, `PluginApiError`, утилиты); миграция vdsina → aeza → cloud; удалён `aeza._unwrap_account`.*
+*Реализовано: `balance_bot/plugins/http_client.py` (`PluginHttpClient`, `PluginApiError`, утилиты); миграция vdsina → aeza → cloud; удалён `aeza._unwrap_account`. HTTP-слой в пакете бота — плагины в Docker монтируются как top-level модули без пакета `plugins`.*
 
 Проблема: `aeza`, `cloud`, `vdsina` дублируют ~200 строк (session, errors, `_to_float`, `_parse_datetime`, trace_id).
 
-### 3.1. `plugins/http_client.py` (или `balance_bot/plugin_http.py`)
+### 3.1. `balance_bot/plugins/http_client.py`
 
 **Вынести:**
 

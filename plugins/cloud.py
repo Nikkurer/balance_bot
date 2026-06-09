@@ -9,7 +9,7 @@ import aiohttp
 
 from balance_bot.models import ServiceStatus
 from balance_bot.plugins.base import ServicePlugin
-from plugins.http_client import (
+from balance_bot.plugins.http_client import (
     PluginApiError,
     PluginHttpClient,
     parse_datetime,
