@@ -7,7 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from balance_bot.models import ServiceConfig, ServiceStatus
+from balance_bot.models import AlertsConfig, ServiceConfig, ServiceStatus
 from balance_bot.notifications import evaluate_alerts, format_alert_message
 from balance_bot.plugins.base import ServicePlugin
 from balance_bot.state import StateStore
@@ -51,6 +51,8 @@ class ServicePoller:
         history: HistoryStore | None = None,
         *,
         poll_lock: asyncio.Lock | None = None,
+        alerts_config: AlertsConfig | None = None,
+        error_streaks: dict[str, int] | None = None,
     ) -> None:
         """Создаёт poller без запуска фоновой задачи.
 
@@ -62,28 +64,36 @@ class ServicePoller:
             history: Опциональное хранилище истории баланса.
             poll_lock: Общий lock сервиса (исключает гонку фонового опроса и
                 ``/refresh``).
+            alerts_config: Параметры алертов; ``None`` — значения по умолчанию.
+            error_streaks: Общий счётчик подряд неудачных опросов по сервисам.
         """
         self.service = service
         self.plugin = plugin
         self.state = state
         self.on_notify = on_notify
         self.history = history
+        self._alerts_config = alerts_config or AlertsConfig()
+        self._error_streaks = error_streaks if error_streaks is not None else {}
         self._poll_lock = poll_lock or asyncio.Lock()
         self._task: asyncio.Task | None = None
 
-    async def poll_once(self) -> ServiceStatus:
+    async def poll_once(self, *, suppress_alerts: bool = False) -> ServiceStatus:
         """Выполняет один опрос, обновляет state и шлёт новые алерты.
 
         Уведомление отправляется только для алертов, которых не было
-        в предыдущем снимке (``risen = new - prev``).
+        в предыдущем снимке (``risen = new - prev``), если не задан
+        ``suppress_alerts``.
+
+        Args:
+            suppress_alerts: Обновить состояние без push-уведомлений.
 
         Returns:
             Актуальный ``ServiceStatus`` (в т.ч. с ``error``).
         """
         async with self._poll_lock:
-            return await self._poll_once_unlocked()
+            return await self._poll_once_unlocked(suppress_alerts=suppress_alerts)
 
-    async def _poll_once_unlocked(self) -> ServiceStatus:
+    async def _poll_once_unlocked(self, *, suppress_alerts: bool = False) -> ServiceStatus:
         name = self.service.name
         plugin_name = self.service.plugin
         logger.debug(
@@ -129,26 +139,73 @@ class ServicePoller:
         if self.history is not None:
             await self._persist_history(name, status)
 
-        new_alerts = evaluate_alerts(self.service, status)
+        error_streak = self._update_error_streak(name, status)
+        new_alerts = evaluate_alerts(
+            self.service,
+            status,
+            error_streak=error_streak,
+            error_confirm_failures=self._alerts_config.error_confirm_failures,
+        )
         prev_alerts = self.state.get_active_alerts(name)
         risen = new_alerts - prev_alerts
         fallen = prev_alerts - new_alerts
         self.state.set_active_alerts(name, new_alerts)
         logger.debug(
-            "Алерты '%s': prev=%s new=%s risen=%s fallen=%s",
+            "Алерты '%s': prev=%s new=%s risen=%s fallen=%s streak=%s suppress=%s",
             name,
             sorted(prev_alerts),
             sorted(new_alerts),
             sorted(risen),
             sorted(fallen),
+            error_streak,
+            suppress_alerts,
         )
 
-        for alert in risen:
-            message = format_alert_message(name, alert, status)
-            logger.debug("Отправка нового алерта '%s' для '%s'", alert, name)
-            await self.on_notify(message)
+        if self._should_persist_alerts():
+            await self._persist_alerts(name, new_alerts, error_streak)
+
+        if not suppress_alerts:
+            for alert in risen:
+                message = format_alert_message(name, alert, status)
+                logger.debug("Отправка нового алерта '%s' для '%s'", alert, name)
+                await self.on_notify(message)
 
         return status
+
+    def _update_error_streak(self, name: str, status: ServiceStatus) -> int:
+        if status.error:
+            streak = self._error_streaks.get(name, 0) + 1
+        else:
+            streak = 0
+        self._error_streaks[name] = streak
+        return streak
+
+    def _should_persist_alerts(self) -> bool:
+        return (
+            self._alerts_config.persist
+            and self.history is not None
+        )
+
+    async def _persist_alerts(
+        self,
+        name: str,
+        alerts: set[str],
+        error_streak: int,
+    ) -> None:
+        assert self.history is not None
+        try:
+            await self.history.save_alert_persistence(name, alerts, error_streak)
+        except Exception as exc:
+            logger.info(
+                "Состояние алертов '%s': не удалось сохранить — %s",
+                name,
+                exc,
+            )
+            logger.debug(
+                "Состояние алертов '%s': ошибка записи",
+                name,
+                exc_info=True,
+            )
 
     async def _persist_history(self, name: str, status: ServiceStatus) -> None:
         """Записывает снимок в историю.
@@ -223,6 +280,7 @@ class Scheduler:
         history: HistoryStore | None = None,
         *,
         prune_interval_hours: int = 0,
+        alerts_config: AlertsConfig | None = None,
     ) -> None:
         """Создаёт пустой планировщик.
 
@@ -231,14 +289,25 @@ class Scheduler:
             on_notify: Колбэк для уведомлений всем разрешённым пользователям.
             history: Опциональное хранилище истории баланса.
             prune_interval_hours: Интервал фонового ``prune``; ``0`` — не запускать.
+            alerts_config: Параметры push-алертов.
         """
         self.state = state
         self.on_notify = on_notify
         self.history = history
         self._prune_interval_hours = prune_interval_hours
+        self._alerts_config = alerts_config or AlertsConfig()
+        self._error_streaks: dict[str, int] = {}
         self._pollers: list[ServicePoller] = []
         self._poll_locks: dict[str, asyncio.Lock] = {}
         self._prune_task: asyncio.Task | None = None
+
+    def hydrate_error_streaks(self, streaks: dict[str, int]) -> None:
+        """Восстанавливает счётчики ошибок из персистентного хранилища.
+
+        Args:
+            streaks: Имя сервиса → число подряд неудачных опросов.
+        """
+        self._error_streaks.update(streaks)
 
     def add_poller(self, service: ServiceConfig, plugin: ServicePlugin) -> None:
         """Регистрирует сервис для фонового опроса.
@@ -256,6 +325,8 @@ class Scheduler:
                 self.on_notify,
                 history=self.history,
                 poll_lock=poll_lock,
+                alerts_config=self._alerts_config,
+                error_streaks=self._error_streaks,
             )
         )
         logger.debug(
@@ -330,8 +401,18 @@ class Scheduler:
         logger.debug("Scheduler: stop_all() count=%d", len(self._pollers))
         await asyncio.gather(*(p.stop() for p in self._pollers))
 
-    async def poll_all_now(self) -> None:
-        """Параллельно выполняет ``poll_once`` для каждого сервиса."""
-        logger.debug("Scheduler: poll_all_now() count=%d", len(self._pollers))
-        await asyncio.gather(*(p.poll_once() for p in self._pollers))
+    async def poll_all_now(self, *, suppress_alerts: bool = False) -> None:
+        """Параллельно выполняет ``poll_once`` для каждого сервиса.
+
+        Args:
+            suppress_alerts: Не слать push-уведомления (состояние обновляется).
+        """
+        logger.debug(
+            "Scheduler: poll_all_now() count=%d suppress_alerts=%s",
+            len(self._pollers),
+            suppress_alerts,
+        )
+        await asyncio.gather(
+            *(p.poll_once(suppress_alerts=suppress_alerts) for p in self._pollers)
+        )
         await self._run_prune("после poll_all_now")

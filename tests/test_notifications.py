@@ -24,6 +24,14 @@ class TestEvaluateAlerts:
         )
         assert evaluate_alerts(service, status) == {"error"}
 
+    def test_error_requires_confirm_failures(self, make_service) -> None:
+        service = make_service()
+        status = ServiceStatus(error="api down")
+        assert evaluate_alerts(service, status, error_streak=1, error_confirm_failures=2) == set()
+        assert evaluate_alerts(service, status, error_streak=2, error_confirm_failures=2) == {
+            "error"
+        }
+
     def test_low_balance_when_below_threshold(self, make_service) -> None:
         service = make_service(balance_threshold=100.0)
         status = ServiceStatus(balance=50.0)

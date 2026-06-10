@@ -44,6 +44,17 @@ CREATE INDEX IF NOT EXISTS idx_poll_errors_service_ts
 
 CREATE INDEX IF NOT EXISTS idx_poll_errors_ts
     ON poll_errors (ts);
+
+CREATE TABLE IF NOT EXISTS alert_state (
+    service TEXT NOT NULL,
+    alert   TEXT NOT NULL,
+    PRIMARY KEY (service, alert)
+);
+
+CREATE TABLE IF NOT EXISTS alert_meta (
+    service      TEXT NOT NULL PRIMARY KEY,
+    error_streak INTEGER NOT NULL DEFAULT 0
+);
 """
 
 
@@ -192,6 +203,33 @@ class HistoryStore:
         """
         return await asyncio.to_thread(self._fetch_series_sync, service, since, limit)
 
+    async def load_alert_persistence(
+        self,
+    ) -> tuple[dict[str, set[str]], dict[str, int]]:
+        """Загружает активные алерты и счётчики ошибок из SQLite.
+
+        Returns:
+            Кортеж ``(active_alerts, error_streaks)``.
+        """
+        return await asyncio.to_thread(self._load_alert_persistence_sync)
+
+    async def save_alert_persistence(
+        self,
+        service: str,
+        alerts: set[str],
+        error_streak: int,
+    ) -> None:
+        """Сохраняет состояние алертов сервиса после опроса.
+
+        Args:
+            service: Имя сервиса.
+            alerts: Активные типы алертов.
+            error_streak: Подряд неудачных опросов (``0`` после успеха).
+        """
+        await asyncio.to_thread(
+            self._save_alert_persistence_sync, service, alerts, error_streak
+        )
+
     async def count_poll_errors(
         self,
         service: str,
@@ -283,6 +321,45 @@ class HistoryStore:
             self._conn.close()
             self._conn = None
             logger.debug("HistoryStore: closed %s", self._db_path)
+
+    def _load_alert_persistence_sync(
+        self,
+    ) -> tuple[dict[str, set[str]], dict[str, int]]:
+        if self._conn is None:
+            raise RuntimeError("HistoryStore не открыт")
+        active: dict[str, set[str]] = {}
+        for service, alert in self._conn.execute(
+            "SELECT service, alert FROM alert_state"
+        ):
+            active.setdefault(service, set()).add(alert)
+        streaks: dict[str, int] = {}
+        for service, streak in self._conn.execute(
+            "SELECT service, error_streak FROM alert_meta"
+        ):
+            streaks[service] = int(streak)
+        return active, streaks
+
+    def _save_alert_persistence_sync(
+        self,
+        service: str,
+        alerts: set[str],
+        error_streak: int,
+    ) -> None:
+        if self._conn is None:
+            raise RuntimeError("HistoryStore не открыт")
+        self._conn.execute("DELETE FROM alert_state WHERE service = ?", (service,))
+        self._conn.executemany(
+            "INSERT INTO alert_state (service, alert) VALUES (?, ?)",
+            [(service, alert) for alert in alerts],
+        )
+        self._conn.execute(
+            """
+            INSERT INTO alert_meta (service, error_streak) VALUES (?, ?)
+            ON CONFLICT(service) DO UPDATE SET error_streak = excluded.error_streak
+            """,
+            (service, error_streak),
+        )
+        self._conn.commit()
 
     def _record_sync(self, service: str, plugin: str, status: ServiceStatus) -> None:
         if self._conn is None:

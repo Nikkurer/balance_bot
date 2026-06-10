@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from balance_bot.models import AppConfig, HistoryConfig, ServiceConfig
+from balance_bot.models import AlertsConfig, AppConfig, HistoryConfig, ServiceConfig
 from balance_bot.exceptions import ConfigError
 from balance_bot.validation import validate_config
 
@@ -103,6 +103,7 @@ def load_config(path: str | Path) -> AppConfig:
         raise ConfigError("timezone: должен быть строкой (IANA, например Europe/Moscow)")
 
     history = _parse_history(raw.get("history"))
+    alerts = _parse_alerts(raw.get("alerts"), history_enabled=history.enabled)
 
     config = AppConfig(
         bot_token=bot_token,
@@ -111,6 +112,7 @@ def load_config(path: str | Path) -> AppConfig:
         plugins_dir=plugins_dir,
         timezone=timezone_name,
         history=history,
+        alerts=alerts,
     )
     validate_config(config)
     logger.debug(
@@ -162,6 +164,37 @@ def _parse_history(raw) -> HistoryConfig:
         chart_max_points=chart_max_points,
         prune_interval_hours=prune_interval_hours,
     )
+
+
+def _parse_alerts(raw, *, history_enabled: bool) -> AlertsConfig:
+    """Разбирает секцию ``alerts`` из YAML."""
+    if raw is None:
+        return AlertsConfig(persist=history_enabled)
+    if not isinstance(raw, dict):
+        raise ConfigError("alerts: должен быть объектом")
+
+    persist = bool(raw.get("persist", history_enabled))
+    suppress_on_startup = bool(raw.get("suppress_on_startup", True))
+    error_confirm_failures = _parse_alerts_int(
+        raw, "error_confirm_failures", default=2
+    )
+
+    return AlertsConfig(
+        persist=persist,
+        suppress_on_startup=suppress_on_startup,
+        error_confirm_failures=error_confirm_failures,
+    )
+
+
+def _parse_alerts_int(raw: dict, key: str, *, default: int) -> int:
+    """Парсит целочисленное поле секции alerts."""
+    if key not in raw:
+        return default
+    value = raw[key]
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"alerts.{key}: должно быть целым числом") from exc
 
 
 def _parse_history_int(raw: dict, key: str, *, default: int) -> int:

@@ -82,6 +82,30 @@ services:
     assert config.history.max_size_mb == 10
 
 
+def test_load_config_alerts_section(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+telegram:
+  bot_token: "999888777:ZZZ_TestToken_abc"
+  allowed_user_ids: [42]
+alerts:
+  persist: false
+  suppress_on_startup: false
+  error_confirm_failures: 3
+services:
+  - name: demo
+    plugin: mock
+    poll_interval_seconds: 120
+""",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    assert config.alerts.persist is False
+    assert config.alerts.suppress_on_startup is False
+    assert config.alerts.error_confirm_failures == 3
+
+
 def test_load_config_missing_telegram_section(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     path.write_text("services: []\n", encoding="utf-8")

@@ -133,7 +133,17 @@ async def run(
         on_notify,
         history=history_store,
         prune_interval_hours=prune_interval,
+        alerts_config=config.alerts,
     )
+    if history_store is not None and config.alerts.persist:
+        active_alerts, error_streaks = await history_store.load_alert_persistence()
+        state.hydrate_alerts(active_alerts)
+        scheduler.hydrate_error_streaks(error_streaks)
+        logger.debug(
+            "Восстановлено состояние алертов: %d сервис(ов), streaks=%s",
+            len(active_alerts),
+            error_streaks,
+        )
     for service in config.services:
         plugin = create_plugin(service)
         scheduler.add_poller(service, plugin)
@@ -156,8 +166,11 @@ async def run(
     logger.info("Команды бота зарегистрированы в Telegram")
     logger.debug("Команды бота зарегистрированы для текущего scope/языков")
 
-    await scheduler.poll_all_now()
-    logger.debug("Первичный poll_all_now() завершён")
+    await scheduler.poll_all_now(suppress_alerts=config.alerts.suppress_on_startup)
+    logger.debug(
+        "Первичный poll_all_now() завершён (suppress_on_startup=%s)",
+        config.alerts.suppress_on_startup,
+    )
     scheduler.start_all(delay_first=True)
     logger.debug("Фоновые poller'ы запущены (первый tick после interval)")
 

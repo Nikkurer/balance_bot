@@ -61,3 +61,12 @@ class StateStore:
             alerts: Текущие активные типы алертов.
         """
         self._active_alerts[service_name] = alerts
+
+    def hydrate_alerts(self, active: dict[str, set[str]]) -> None:
+        """Восстанавливает активные алерты из персистентного хранилища.
+
+        Args:
+            active: Имя сервиса → множество типов алертов.
+        """
+        for service_name, alerts in active.items():
+            self._active_alerts[service_name] = set(alerts)

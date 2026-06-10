@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from balance_bot.models import ServiceStatus
+from balance_bot.models import AlertsConfig, ServiceStatus
 from balance_bot.plugins.base import ServicePlugin
 from balance_bot.scheduler import Scheduler, ServicePoller
 from balance_bot.state import StateStore
@@ -122,6 +122,7 @@ async def test_poll_once_plugin_exception_sets_error_status(make_service) -> Non
         _FailingPlugin(service),
         state,
         on_notify=capture,
+        alerts_config=AlertsConfig(error_confirm_failures=1),
     )
     await poller.poll_once()
 
@@ -195,3 +196,85 @@ async def test_scheduler_poll_all_now(make_service) -> None:
 
     assert state.get_status("a") is not None
     assert state.get_status("b") is not None
+
+
+@pytest.mark.asyncio
+async def test_poll_once_suppress_alerts(make_service) -> None:
+    state = StateStore()
+    service = make_service(name="svc", balance_threshold=100.0)
+    messages: list[str] = []
+
+    async def capture(text: str) -> None:
+        messages.append(text)
+
+    poller = ServicePoller(
+        service,
+        _StaticPlugin(service, ServiceStatus(balance=5.0)),
+        state,
+        on_notify=capture,
+    )
+
+    await poller.poll_once(suppress_alerts=True)
+
+    assert messages == []
+    assert state.get_active_alerts("svc") == {"low_balance"}
+
+
+@pytest.mark.asyncio
+async def test_error_alert_requires_confirm_failures(make_service) -> None:
+    class _FailingPlugin(ServicePlugin):
+        async def fetch_status(self) -> ServiceStatus:
+            raise RuntimeError("boom")
+
+    state = StateStore()
+    service = make_service(name="svc")
+    messages: list[str] = []
+
+    async def capture(text: str) -> None:
+        messages.append(text)
+
+    poller = ServicePoller(
+        service,
+        _FailingPlugin(service),
+        state,
+        on_notify=capture,
+        alerts_config=AlertsConfig(error_confirm_failures=2),
+    )
+
+    await poller.poll_once()
+    assert messages == []
+    assert state.get_active_alerts("svc") == set()
+
+    await poller.poll_once()
+    assert len(messages) == 1
+    assert state.get_active_alerts("svc") == {"error"}
+
+
+@pytest.mark.asyncio
+async def test_hydrated_error_not_notified_on_suppressed_startup(make_service) -> None:
+    state = StateStore()
+    service = make_service(name="svc")
+    messages: list[str] = []
+
+    async def capture(text: str) -> None:
+        messages.append(text)
+
+    scheduler = Scheduler(
+        state,
+        on_notify=capture,
+        alerts_config=AlertsConfig(
+            error_confirm_failures=1,
+            suppress_on_startup=True,
+        ),
+    )
+    state.hydrate_alerts({"svc": {"error"}})
+    scheduler.hydrate_error_streaks({"svc": 2})
+    scheduler.add_poller(
+        service,
+        _StaticPlugin(service, ServiceStatus(error="still down")),
+    )
+
+    await scheduler.poll_all_now(suppress_alerts=True)
+
+    assert messages == []
+    assert state.get_active_alerts("svc") == {"error"}

@@ -19,6 +19,12 @@ timezone: UTC
 #   chart_max_points: 10000     # 0 — без лимита; иначе последние N точек для /chart
 #   prune_interval_hours: 24    # 0 — prune только при старте и после /refresh
 
+# Push-алерты (требует history.enabled для persist)
+# alerts:
+#   persist: true                 # активные алерты и счётчик ошибок в SQLite
+#   suppress_on_startup: true     # не слать уведомления при первом опросе после старта
+#   error_confirm_failures: 2     # алерт error после N неудачных опросов подряд (1 — сразу)
+
 services:
   # Документация: docs/plugins/vdsina.md, docs/plugins/aeza.md, docs/plugins/cloud.md, docs/plugins/mock.md
   # --- VDSina: один плагин, два аккаунта (ru / com) — разные api_token ---

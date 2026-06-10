@@ -73,6 +73,7 @@ def validate_config(config: AppConfig) -> None:
             errors.extend(_validate_service(service, prefix, seen_names))
 
     errors.extend(_validate_history(config))
+    errors.extend(_validate_alerts(config))
 
     if errors:
         raise ConfigError("\n".join(f"  - {e}" for e in errors))
@@ -151,5 +152,20 @@ def _validate_history(config: AppConfig) -> list[str]:
     if history.prune_interval_hours < 0:
         errors.append(
             "history.prune_interval_hours: должен быть >= 0 (0 — без фонового prune)"
+        )
+    return errors
+
+
+def _validate_alerts(config: AppConfig) -> list[str]:
+    """Проверяет секцию ``alerts``."""
+    alerts = config.alerts
+    errors: list[str] = []
+    if alerts.error_confirm_failures < 1:
+        errors.append(
+            "alerts.error_confirm_failures: должен быть >= 1 (1 — алерт сразу)"
+        )
+    if alerts.persist and not config.history.enabled:
+        errors.append(
+            "alerts.persist: требует history.enabled (иначе некуда сохранять состояние)"
         )
     return errors

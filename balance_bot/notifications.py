@@ -16,15 +16,23 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def evaluate_alerts(service: ServiceConfig, status: ServiceStatus) -> set[str]:
+def evaluate_alerts(
+    service: ServiceConfig,
+    status: ServiceStatus,
+    *,
+    error_streak: int = 0,
+    error_confirm_failures: int = 1,
+) -> set[str]:
     """Определяет активные предупреждения по текущему снимку состояния.
 
-    При ``status.error`` возвращается только ``{"error"}`` — пороги баланса
-    и подписки не проверяются.
+    При ``status.error`` возвращается только ``{"error"}`` (после подтверждения
+    по счётчику) — пороги баланса и подписки не проверяются.
 
     Args:
         service: Конфигурация сервиса с порогами.
         status: Снимок после опроса плагина.
+        error_streak: Число подряд неудачных опросов (включая текущий).
+        error_confirm_failures: Порог для алерта ``error``.
 
     Returns:
         Множество идентификаторов алертов: ``low_balance``,
@@ -33,7 +41,8 @@ def evaluate_alerts(service: ServiceConfig, status: ServiceStatus) -> set[str]:
     alerts: set[str] = set()
 
     if status.error:
-        alerts.add("error")
+        if error_confirm_failures <= 1 or error_streak >= error_confirm_failures:
+            alerts.add("error")
         return alerts
 
     if (

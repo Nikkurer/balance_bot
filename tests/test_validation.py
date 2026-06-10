@@ -2,7 +2,7 @@
 
 import pytest
 
-from balance_bot.models import HistoryConfig, ServiceConfig
+from balance_bot.models import AlertsConfig, HistoryConfig, ServiceConfig
 from balance_bot.exceptions import ConfigError
 from balance_bot.validation import validate_config
 
@@ -150,4 +150,21 @@ def test_history_chart_points_per_day_must_be_non_negative(make_app_config) -> N
                     chart_points_per_day=-1,
                 )
             )
+        )
+
+
+def test_alerts_persist_requires_history(make_app_config) -> None:
+    with pytest.raises(ConfigError, match="alerts.persist"):
+        validate_config(
+            make_app_config(
+                alerts=AlertsConfig(persist=True, suppress_on_startup=True),
+                history=HistoryConfig(enabled=False),
+            )
+        )
+
+
+def test_alerts_error_confirm_failures_must_be_positive(make_app_config) -> None:
+    with pytest.raises(ConfigError, match="error_confirm_failures"):
+        validate_config(
+            make_app_config(alerts=AlertsConfig(error_confirm_failures=0))
         )

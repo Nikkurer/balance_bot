@@ -32,3 +32,10 @@ def test_set_active_alerts() -> None:
     assert store.get_active_alerts("svc") == {"low_balance"}
     store.set_active_alerts("svc", set())
     assert store.get_active_alerts("svc") == set()
+
+
+def test_hydrate_alerts() -> None:
+    store = StateStore()
+    store.hydrate_alerts({"a": {"error"}, "b": {"low_balance", "subscription_ending"}})
+    assert store.get_active_alerts("a") == {"error"}
+    assert store.get_active_alerts("b") == {"low_balance", "subscription_ending"}

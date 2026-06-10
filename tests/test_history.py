@@ -424,3 +424,25 @@ async def test_migrate_legacy_errors_from_balance_history(history_db: Path) -> N
 
     assert error_row == ("old-svc", "legacy fail")
     assert balance_count == 0
+
+
+@pytest.mark.asyncio
+async def test_alert_persistence_roundtrip(history_store: HistoryStore) -> None:
+    await history_store.save_alert_persistence("svc-a", {"error", "low_balance"}, 3)
+    await history_store.save_alert_persistence("svc-b", set(), 0)
+
+    active, streaks = await history_store.load_alert_persistence()
+
+    assert active == {"svc-a": {"error", "low_balance"}}
+    assert streaks == {"svc-a": 3, "svc-b": 0}
+
+
+@pytest.mark.asyncio
+async def test_alert_persistence_overwrites_service(history_store: HistoryStore) -> None:
+    await history_store.save_alert_persistence("svc", {"error"}, 2)
+    await history_store.save_alert_persistence("svc", {"low_balance"}, 0)
+
+    active, streaks = await history_store.load_alert_persistence()
+
+    assert active == {"svc": {"low_balance"}}
+    assert streaks == {"svc": 0}
